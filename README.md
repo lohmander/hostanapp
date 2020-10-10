@@ -1,5 +1,5 @@
 # Hostan app 
-`/ˈhʊsˌtan/`` app
+`/ˈhʊsˌtan/` app
 
 Hostan provides a set of Kubernetes primitives to easily and rapidly deploy apps on a cluster. "Hostan" is a Swedish
 word that translates to "the cough."
