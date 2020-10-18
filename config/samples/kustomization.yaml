@@ -1,0 +1,5 @@
+## Append samples you want in your CSV to this file as resources ##
+resources:
+- hostan_v1alpha1_app.yaml
+- hostan_v1alpha1_provider.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

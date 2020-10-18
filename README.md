@@ -22,6 +22,7 @@ spec:
   services:
     - name: webapp
       image: lohmander/webapp-image:latest
+      port: 80
       ingress:
         host: myapp.hostan.app
   uses:

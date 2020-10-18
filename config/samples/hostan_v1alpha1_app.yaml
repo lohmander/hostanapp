@@ -1,0 +1,14 @@
+apiVersion: hostan.hostan.app/v1alpha1
+kind: App
+metadata:
+  name: app-sample
+spec:
+  services:
+    - name: api
+      image: nginx:latest
+      port: 3000
+    - name: frontend
+      image: nginx:latest
+      port: 80
+      ingress:
+        host: hannes.test

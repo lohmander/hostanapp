@@ -1,0 +1,14 @@
+domain: hostan.app
+layout: go.kubebuilder.io/v2
+projectName: hostanapp
+repo: github.com/lohmander/hostanapp
+resources:
+- group: hostan
+  kind: App
+  version: v1alpha1
+- group: hostan
+  kind: Provider
+  version: v1alpha1
+version: 3-alpha
+plugins:
+  go.sdk.operatorframework.io/v2-alpha: {}
