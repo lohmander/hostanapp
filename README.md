@@ -7,9 +7,10 @@ word that translates to "the cough."
 ### Todo
 
 - [x] Create README outlining the future functionality
-- [ ] Implement CDR and controller for the App resource
+- [x] Implement CDR and controller for the App resource
 - [ ] Implement CDR and controller for the Provider resource
 - [ ] Create spec/protobuf file for the provider interface
+- [ ] Create config maps and secrets for config upon reconciliation
 
 ### What it looks like (WIP)
 
