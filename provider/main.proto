@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package provider;
+
+service Provider {
+  rpc ProvisionAppConfig(ProvisionAppConfigRequest)
+      returns(ProvisionAppConfigResponse) {}
+  rpc DeprovisionAppConfig(DeprovisionAppConfigRequest)
+      returns(DeprovisionAppConfigResponse) {}
+}
+
+message ConfigVariable {
+  string name = 1;
+  string value = 2;
+  bool secret = 3;
+}
+
+message ProvisionAppConfigRequest { string app_name = 1; }
+message ProvisionAppConfigResponse {
+  repeated ConfigVariable config_variables = 1;
+}
+
+message DeprovisionAppConfigRequest { string app_name = 1; }
+message DeprovisionAppConfigResponse {}
