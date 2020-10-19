@@ -30,4 +30,57 @@ spec:
   uses:
     - name: postgresql
     - name: redis
+    - name: s3
+      config:
+        endpointUrl: https://fra1.digitaloceanspaces.com
 ```
+
+## Table of contents
+
+1. Installation
+2. Getting started
+3. Resource types
+   - App
+   - Provider
+   - Snapshot
+4. Providers
+   - Use existing
+   - Build your own provider
+
+## 1. Installation
+
+TBD
+
+## 2. Getting started
+
+TBD
+
+## 3. Resource types
+
+TBD
+
+### App
+
+TBD
+
+### Provider
+
+TBD
+
+### Snapshot
+
+TBD
+
+## 4. Providers
+
+TBD
+
+### Use existing
+
+- PostgreSQL
+- Redis
+- S3
+
+### Build your own provider
+
+TBD
