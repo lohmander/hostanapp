@@ -7,6 +7,9 @@ service Provider {
       returns(ProvisionAppConfigResponse) {}
   rpc DeprovisionAppConfig(DeprovisionAppConfigRequest)
       returns(DeprovisionAppConfigResponse) {}
+  rpc GetSnapshot(GetSnapshotRequest) returns(stream GetSnapshotResponse) {}
+  rpc RestoreSnapshot(stream RestoreSnapshotRequest)
+      returns(RestoreSnapshotResponse) {}
 }
 
 message ConfigVariable {
@@ -22,3 +25,12 @@ message ProvisionAppConfigResponse {
 
 message DeprovisionAppConfigRequest { string app_name = 1; }
 message DeprovisionAppConfigResponse {}
+
+message GetSnapshotRequest { string app_name = 1; }
+message GetSnapshotResponse { bytes chunk = 1; }
+
+message RestoreSnapshotRequest {
+  string app_name = 1;
+  bytes chunk = 2;
+}
+message RestoreSnapshotResponse {}
