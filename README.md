@@ -1,4 +1,4 @@
-# Hostan app
+# 🤧 Hostan app
 
 `/ˈhʊsˌtan/` app
 
@@ -42,7 +42,6 @@ spec:
 3. Resource types
    - App
    - Provider
-   - Snapshot
 4. Providers
    - Use existing
    - Build your own provider
@@ -64,10 +63,6 @@ TBD
 TBD
 
 ### Provider
-
-TBD
-
-### Snapshot
 
 TBD
 
