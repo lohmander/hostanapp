@@ -1,0 +1,11 @@
+apiVersion: hostan.hostan.app/v1alpha1
+kind: App
+metadata:
+  name: my-app
+spec:
+  services:
+    - name: webapp
+      image: nginx
+      port: 80
+      ingress:
+        host: nginx.test
