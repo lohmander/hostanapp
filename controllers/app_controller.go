@@ -48,10 +48,10 @@ type AppReconciler struct {
 // +kubebuilder:rbac:groups=hostan.hostan.app,resources=apps/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
-func getProviderURL(providers *hostanv1alpha1.ProviderList, name string) (*string, error) {
+func getProviderWithName(providers *hostanv1alpha1.ProviderList, name string) (*hostanv1alpha1.Provider, error) {
 	for _, provider := range providers.Items {
 		if provider.ObjectMeta.Name == name {
-			return &provider.Spec.URL, nil
+			return &provider, nil
 		}
 	}
 
@@ -98,49 +98,26 @@ func (r *AppReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.
 	}
 
 	// iterate through uses and get configuration from providers
-	for _, uses := range app.Spec.Uses {
-		providerURL, err := getProviderURL(providers, uses.Name)
+	for _, use := range app.Spec.Uses {
+		var configMap *corev1.ConfigMap
+
+		provider_, err := getProviderWithName(providers, use.Name)
 
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 
-		providerClient, err := provider.NewClient(*providerURL)
-
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		res, err := providerClient.ProvisionAppConfig(ctx, &provider.ProvisionAppConfigRequest{
-			AppName: app.Name,
-		})
-
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		configMapName := fmt.Sprintf("%s-%s", app.Name, uses.Name)
-		configMap := &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      configMapName,
-				Namespace: app.Namespace,
-				Annotations: map[string]string{
-					"hostan.hostan.app/config-hash": "", // TODO: implement this
-				},
-				Labels: map[string]string{
-					"hostan.hostan.app/provider": uses.Name,
-					"hostan.hostan.app/app":      app.Name,
-				},
-			},
-			Data: map[string]string{},
-		}
-		ctrl.SetControllerReference(app, configMap, r.Scheme)
-
+		configMapName := fmt.Sprintf("%s-%s", app.Name, use.Name)
 		found := &corev1.ConfigMap{}
 		err = r.Get(ctx, types.NamespacedName{Namespace: app.Namespace, Name: configMapName}, found)
 
 		if err != nil && errors.IsNotFound(err) {
 			log.Info("Creating config map", "name", configMapName)
+			configMap, err := r.providerConfigMapForAppUse(app, provider_, &use)
+
+			if err != nil {
+				return ctrl.Result{}, err
+			}
 
 			err = r.Create(ctx, configMap)
 
@@ -153,19 +130,29 @@ func (r *AppReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.
 			return ctrl.Result{Requeue: true}, nil
 		}
 
-		for _, kv := range res.ConfigVariables {
-			configMap.Data[kv.Name] = kv.Value
+		configHash, err := utils.CreateConfigHash(map[string]string{})
+
+		if err != nil {
+			return ctrl.Result{}, err
 		}
 
-		if len(res.ConfigVariables) > 0 {
-			if err = r.Update(ctx, configMap); err != nil {
-				if err != nil {
-					return ctrl.Result{}, err
-				}
+		if found.Annotations["hostan.hostan.app/config-hash"] == *configHash {
+			continue
+		}
+
+		configMap, err = r.providerConfigMapForAppUse(app, provider_, &use)
+
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		if err = r.Update(ctx, configMap); err != nil {
+			if err != nil {
+				return ctrl.Result{}, err
 			}
-
-			log.Info("Successfully updated config map", "nape", configMapName)
 		}
+
+		log.Info("Successfully updated config map", "name", configMapName)
 	}
 
 	// Deprovision and delete old configs
@@ -186,13 +173,13 @@ func (r *AppReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.
 		if !utils.UsesProviderWithNameInApp(cm.Name, app) {
 			log.Info("Deprovisining provider for configmap", "ConfigMap", cm.Name, "App", app.Name)
 
-			providerURL, err := getProviderURL(providers, cm.Labels["hostan.hostan.app/provider"])
+			provider_, err := getProviderWithName(providers, cm.Labels["hostan.hostan.app/provider"])
 
 			if err != nil {
 				return ctrl.Result{}, err
 			}
 
-			providerClient, err := provider.NewClient(*providerURL)
+			providerClient, err := provider.NewClient(provider_.Spec.URL)
 
 			if err != nil {
 				return ctrl.Result{}, err
@@ -589,6 +576,50 @@ func (r *AppReconciler) ingressForAppService(app *hostanv1alpha1.App, service ho
 	ctrl.SetControllerReference(app, ingress, r.Scheme)
 
 	return ingress
+}
+
+func (r *AppReconciler) providerConfigMapForAppUse(app *hostanv1alpha1.App, provider_ *hostanv1alpha1.Provider, use *hostanv1alpha1.AppUse) (*corev1.ConfigMap, error) {
+	providerClient, err := provider.NewClient(provider_.Spec.URL)
+
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+	res, err := providerClient.ProvisionAppConfig(ctx, &provider.ProvisionAppConfigRequest{
+		AppName: app.Name,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	configHash, err := utils.CreateConfigHash(map[string]string{})
+	if err != nil {
+		return nil, err
+	}
+	configMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-%s", app.Name, provider_.Name),
+			Namespace: app.Namespace,
+			Annotations: map[string]string{
+				"hostan.hostan.app/config-hash": *configHash,
+			},
+			Labels: map[string]string{
+				"hostan.hostan.app/provider": use.Name,
+				"hostan.hostan.app/app":      app.Name,
+			},
+		},
+		Data: map[string]string{},
+	}
+
+	for _, kv := range res.ConfigVariables {
+		configMap.Data[kv.Name] = kv.Value
+	}
+
+	ctrl.SetControllerReference(app, configMap, r.Scheme)
+
+	return configMap, nil
 }
 
 func nameForService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) string {

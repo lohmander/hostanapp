@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 
 	hostanv1alpha1 "github.com/lohmander/hostanapp/api/v1alpha1"
@@ -41,4 +43,19 @@ func UsesProviderWithNameInApp(name string, app *hostanv1alpha1.App) bool {
 	}
 
 	return false
+}
+
+// CreateConfigHash takes a string map and returns a hash for the given map
+func CreateConfigHash(config map[string]string) (*string, error) {
+	configString, err := json.Marshal(config)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	h := sha256.New()
+	h.Write(configString)
+	hashString := fmt.Sprintf("%x", h.Sum(nil))
+
+	return &hashString, nil
 }
