@@ -58,6 +58,7 @@ func getProviderURL(providers *hostanv1alpha1.ProviderList, name string) (*strin
 	return nil, fmt.Errorf("no provider found for %s", name)
 }
 
+// Reconcile implements the reconcile loop
 func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	log := r.Log.WithValues("app", req.NamespacedName)
