@@ -41,7 +41,8 @@ func (r *ProviderReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	_ = context.Background()
 	_ = r.Log.WithValues("provider", req.NamespacedName)
 
-	// your logic here
+	// there's not really any reconciliation necessary here, the controller is not
+	// responsible for deploying the provider
 
 	return ctrl.Result{}, nil
 }

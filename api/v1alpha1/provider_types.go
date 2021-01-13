@@ -29,7 +29,7 @@ type ProviderSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of Provider. Edit Provider_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	URL string `json:"url,omitempty"`
 }
 
 // ProviderStatus defines the observed state of Provider

@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	hostanv1alpha1 "github.com/lohmander/hostanapp/api/v1alpha1"
+	provider "github.com/lohmander/hostanapp/provider"
 	"github.com/lohmander/hostanapp/utils"
 )
 
@@ -46,6 +47,16 @@ type AppReconciler struct {
 // +kubebuilder:rbac:groups=hostan.hostan.app,resources=apps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=hostan.hostan.app,resources=apps/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+
+func getProviderURL(providers *hostanv1alpha1.ProviderList, name string) (*string, error) {
+	for _, provider := range providers.Items {
+		if provider.ObjectMeta.Name == name {
+			return &provider.Spec.URL, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no provider found for %s", name)
+}
 
 func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
@@ -62,6 +73,82 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 		log.Error(err, "Failed to get App")
 		return ctrl.Result{}, err
+	}
+
+	providers := &hostanv1alpha1.ProviderList{}
+
+	if err = r.List(ctx, providers); err != nil {
+		log.Error(err, "Failed to get Providers")
+		return ctrl.Result{}, err
+	}
+
+	// iterate through uses and get configuration from providers
+	for _, uses := range app.Spec.Uses {
+		providerURL, err := getProviderURL(providers, uses.Name)
+
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		providerClient, err := provider.NewClient(*providerURL)
+
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		res, err := providerClient.ProvisionAppConfig(ctx, &provider.ProvisionAppConfigRequest{
+			AppName: req.Name,
+		})
+
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+		configMapName := fmt.Sprintf("%s-%s", uses.Name, req.Name)
+		configMap := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("%s-%s", uses.Name, req.Name),
+				Namespace: req.Namespace,
+				Annotations: map[string]string{
+					"hostan.hostan.app/provider":    uses.Name,
+					"hostan.hostan.app/config-hash": "", // TODO: implement this
+				},
+			},
+			Data: map[string]string{},
+		}
+		ctrl.SetControllerReference(app, configMap, r.Scheme)
+
+		found := &corev1.ConfigMap{}
+		err = r.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: configMapName}, found)
+
+		if err != nil && errors.IsNotFound(err) {
+			log.Info("Creating config map", "name", configMapName)
+
+			err = r.Create(ctx, configMap)
+
+			if err != nil {
+				log.Error(err, "Failed to create config map", "name", configMapName)
+				return ctrl.Result{}, err
+			}
+
+			log.Info("Successfully created config map", "name", configMapName)
+			return ctrl.Result{Requeue: true}, nil
+		}
+
+		for _, kv := range res.ConfigVariables {
+			configMap.Data[kv.Name] = kv.Value
+		}
+
+		if len(res.ConfigVariables) > 0 {
+			if err = r.Update(ctx, configMap); err != nil {
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+
+			log.Info("Successfully updated config map", "nape", configMapName)
+		}
+
 	}
 
 	for _, service := range app.Spec.Services {

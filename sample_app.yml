@@ -9,3 +9,5 @@ spec:
       port: 80
       ingress:
         host: nginx.test
+  uses:
+    - name: hello-provider

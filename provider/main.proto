@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package provider;
 
+option go_package = "github.com/lohmander/hostanapp/provider";
+
 service Provider {
   rpc ProvisionAppConfig(ProvisionAppConfigRequest)
       returns (ProvisionAppConfigResponse) {}
