@@ -78,6 +78,10 @@ spec:
               items:
                 description: AppUse defines something `provided` that an app uses
                 properties:
+                  config:
+                    additionalProperties:
+                      type: string
+                    type: object
                   name:
                     maxLength: 20
                     minLength: 3

@@ -17,9 +17,15 @@ type HelloProviderServer struct {
 func (*HelloProviderServer) ProvisionAppConfig(ctx context.Context, req *provider.ProvisionAppConfigRequest) (*provider.ProvisionAppConfigResponse, error) {
 	log.Printf("Returning config vars to %s", req.AppName)
 
+	greet := req.AppName
+
+	if name, ok := req.Config["greet"]; ok {
+		greet = name
+	}
+
 	return &provider.ProvisionAppConfigResponse{
 		ConfigVariables: []*provider.ConfigVariable{
-			{Name: "hello", Value: req.AppName, Secret: false},
+			{Name: "hello", Value: greet, Secret: false},
 		},
 	}, nil
 }

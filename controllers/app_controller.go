@@ -130,7 +130,7 @@ func (r *AppReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.
 			return ctrl.Result{Requeue: true}, nil
 		}
 
-		configHash, err := utils.CreateConfigHash(map[string]string{})
+		configHash, err := utils.CreateConfigHash(use.Config)
 
 		if err != nil {
 			return ctrl.Result{}, err
@@ -588,13 +588,14 @@ func (r *AppReconciler) providerConfigMapForAppUse(app *hostanv1alpha1.App, prov
 	ctx := context.Background()
 	res, err := providerClient.ProvisionAppConfig(ctx, &provider.ProvisionAppConfigRequest{
 		AppName: app.Name,
+		Config:  use.Config,
 	})
 
 	if err != nil {
 		return nil, err
 	}
 
-	configHash, err := utils.CreateConfigHash(map[string]string{})
+	configHash, err := utils.CreateConfigHash(use.Config)
 	if err != nil {
 		return nil, err
 	}

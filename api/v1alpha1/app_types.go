@@ -49,6 +49,9 @@ type AppUse struct {
 	// +kubebuilder:validation:MaxLength=20
 	// +kubebuilder:validation:MinLength=3
 	Name string `json:"name"`
+
+	// +kubebuilder:validation:Optional
+	Config map[string]string `json:"config"`
 }
 
 // AppSpec defines the desired state of App
