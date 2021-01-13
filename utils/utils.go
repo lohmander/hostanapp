@@ -31,3 +31,14 @@ func ServiceWithNameInApp(name string, app *hostanv1alpha1.App) bool {
 
 	return false
 }
+
+// UsesProviderWithNameInApp checks if there's a provider usage with name in the app
+func UsesProviderWithNameInApp(name string, app *hostanv1alpha1.App) bool {
+	for _, uses := range app.Spec.Uses {
+		if fmt.Sprintf("%s-%s", app.Name, uses.Name) == name {
+			return true
+		}
+	}
+
+	return false
+}

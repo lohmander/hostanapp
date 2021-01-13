@@ -76,6 +76,20 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, err
 	}
 
+	result, err := r.reconcileProviders(log, app)
+
+	// Return either if there's an error or we returned a
+	// requeue result
+	if err != nil || result.Requeue {
+		return result, err
+	}
+
+	return r.reconcileAppServices(log, app)
+}
+
+func (r *AppReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.App) (ctrl.Result, error) {
+	var err error
+	ctx := context.Background()
 	providers := &hostanv1alpha1.ProviderList{}
 
 	if err = r.List(ctx, providers); err != nil {
@@ -98,21 +112,24 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 
 		res, err := providerClient.ProvisionAppConfig(ctx, &provider.ProvisionAppConfigRequest{
-			AppName: req.Name,
+			AppName: app.Name,
 		})
 
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 
-		configMapName := fmt.Sprintf("%s-%s", uses.Name, req.Name)
+		configMapName := fmt.Sprintf("%s-%s", app.Name, uses.Name)
 		configMap := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      fmt.Sprintf("%s-%s", uses.Name, req.Name),
-				Namespace: req.Namespace,
+				Name:      configMapName,
+				Namespace: app.Namespace,
 				Annotations: map[string]string{
-					"hostan.hostan.app/provider":    uses.Name,
 					"hostan.hostan.app/config-hash": "", // TODO: implement this
+				},
+				Labels: map[string]string{
+					"hostan.hostan.app/provider": uses.Name,
+					"hostan.hostan.app/app":      app.Name,
 				},
 			},
 			Data: map[string]string{},
@@ -120,7 +137,7 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		ctrl.SetControllerReference(app, configMap, r.Scheme)
 
 		found := &corev1.ConfigMap{}
-		err = r.Get(ctx, types.NamespacedName{Namespace: req.Namespace, Name: configMapName}, found)
+		err = r.Get(ctx, types.NamespacedName{Namespace: app.Namespace, Name: configMapName}, found)
 
 		if err != nil && errors.IsNotFound(err) {
 			log.Info("Creating config map", "name", configMapName)
@@ -149,8 +166,65 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 			log.Info("Successfully updated config map", "nape", configMapName)
 		}
-
 	}
+
+	// Deprovision and delete old configs
+	configMapList := &corev1.ConfigMapList{}
+	err = r.List(
+		ctx,
+		configMapList,
+		client.InNamespace(app.Namespace),
+		client.MatchingLabels{"hostan.hostan.app/app": app.Name},
+	)
+
+	if err != nil {
+		log.Error(err, "Failed to get config maps for app", "name", app.Name)
+		return ctrl.Result{}, err
+	}
+
+	for _, cm := range configMapList.Items {
+		if !utils.UsesProviderWithNameInApp(cm.Name, app) {
+			log.Info("Deprovisining provider for configmap", "ConfigMap", cm.Name, "App", app.Name)
+
+			providerURL, err := getProviderURL(providers, cm.Labels["hostan.hostan.app/provider"])
+
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			providerClient, err := provider.NewClient(*providerURL)
+
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			_, err = providerClient.DeprovisionAppConfig(ctx, &provider.DeprovisionAppConfigRequest{
+				AppName: app.Name,
+			})
+
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+
+			log.Info("Successfully deprovisioned", "App", app.Name, "WithProvider", cm.Labels["hostan.hostan.app/provider"])
+			log.Info("Deleting configmap", "ConfigMap", cm.Name, "App", app.Name)
+			err = r.Delete(ctx, &cm, client.GracePeriodSeconds(10))
+
+			if err != nil {
+				log.Error(err, "Failed to delete config map", cm.Name, "for app", app.Name)
+				return ctrl.Result{}, err
+			}
+
+			return ctrl.Result{Requeue: true}, nil
+		}
+	}
+
+	return ctrl.Result{}, nil
+}
+
+func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha1.App) (ctrl.Result, error) {
+	var err error
+	ctx := context.Background()
 
 	for _, service := range app.Spec.Services {
 		// Reconcile deployments
@@ -173,7 +247,7 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		}
 
 		updated := false
-		container := &found.Spec.Template.Spec.Containers[0]
+		container := &found.Spec.Template.Spec.Containers[0] // For now we only support one container per pod
 
 		// Check if the image changed, and if so update it
 		if container.Image != service.Image {
@@ -225,7 +299,7 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	err = r.List(
 		ctx,
 		deployList,
-		client.InNamespace(req.NamespacedName.Namespace),
+		client.InNamespace(app.Namespace),
 		client.MatchingLabels{"app": app.Name},
 	)
 

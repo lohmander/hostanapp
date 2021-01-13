@@ -24,6 +24,11 @@ func (*HelloProviderServer) ProvisionAppConfig(ctx context.Context, req *provide
 	}, nil
 }
 
+func (*HelloProviderServer) DeprovisionAppConfig(ctx context.Context, req *provider.DeprovisionAppConfigRequest) (*provider.DeprovisionAppConfigResponse, error) {
+	log.Printf("Deprovision called by %s", req.AppName)
+	return &provider.DeprovisionAppConfigResponse{}, nil
+}
+
 func main() {
 	port := 5000
 	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
