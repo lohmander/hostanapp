@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
+	"github.com/iancoleman/strcase"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1beta1"
@@ -88,6 +89,11 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 }
 
 func (r *AppReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.App) (ctrl.Result, error) {
+	// Not all apps has uses
+	if app.Spec.Uses == nil {
+		return ctrl.Result{}, nil
+	}
+
 	var err error
 	ctx := context.Background()
 	providers := &hostanv1alpha1.ProviderList{}
@@ -213,9 +219,17 @@ func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha
 	var err error
 	ctx := context.Background()
 
+	providerConfigMaps := &corev1.ConfigMapList{}
+	err = r.List(ctx, providerConfigMaps, client.MatchingLabels{"hostan.hostan.app/app": app.Name})
+
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	for _, service := range app.Spec.Services {
 		// Reconcile deployments
-		deploy := r.deploymentForAppService(app, service)
+		// deploy := r.deploymentForAppService(app, service, providerConfigMaps.Items)
+		deploy := r.deploymentForAppService(app, service, []corev1.ConfigMap{})
 
 		found := &appsv1.Deployment{}
 		err = r.Get(ctx, types.NamespacedName{Name: deploy.Name, Namespace: app.Namespace}, found)
@@ -253,6 +267,41 @@ func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha
 			container.Ports[0].ContainerPort = service.Port
 			updated = true
 		}
+
+		// TODO: check if providers changed
+		inConfigMapList := func(name string, ls *corev1.ConfigMapList) bool {
+			for _, item := range ls.Items {
+				if item.Name == name {
+					return true
+				}
+			}
+
+			return false
+		}
+
+		inEnvFromList := func(name string, ls []corev1.EnvFromSource) bool {
+			for _, item := range ls {
+				if item.ConfigMapRef.Name == name {
+					return true
+				}
+			}
+
+			return false
+		}
+
+		for _, envFrom := range container.EnvFrom {
+			if !inConfigMapList(envFrom.ConfigMapRef.Name, providerConfigMaps) {
+				updated = true
+			}
+		}
+
+		for _, cm := range providerConfigMaps.Items {
+			if !inEnvFromList(cm.Name, container.EnvFrom) {
+				updated = true
+			}
+		}
+
+		container.EnvFrom = deploy.Spec.Template.Spec.Containers[0].EnvFrom
 
 		// If any property was updated, update the deployment and requeue
 		if updated {
@@ -480,8 +529,20 @@ func (r *AppReconciler) reconcileIngress(log logr.Logger, app *hostanv1alpha1.Ap
 	return ctrl.Result{}, nil
 }
 
-func (r *AppReconciler) deploymentForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) *appsv1.Deployment {
+func (r *AppReconciler) deploymentForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService, providerConfigMaps []corev1.ConfigMap) *appsv1.Deployment {
 	var replicas int32 = 1
+	var envFrom []corev1.EnvFromSource
+
+	for _, providerConfigMap := range providerConfigMaps {
+		envFrom = append(envFrom, corev1.EnvFromSource{
+			Prefix: fmt.Sprintf("%s_", strcase.ToScreamingSnake(providerConfigMap.Labels["hostan.hostan.app/provider"])),
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: providerConfigMap.Name,
+				},
+			},
+		})
+	}
 
 	name := nameForService(app, service)
 	labels := labelsForServiceDeployment(app, service)
@@ -508,14 +569,23 @@ func (r *AppReconciler) deploymentForAppService(app *hostanv1alpha1.App, service
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: service.Port,
 						}},
+						EnvFrom: envFrom,
 					}},
 				},
 			},
 		},
 	}
 
+	fmt.Println("app", app)
+	fmt.Println("deploy", deploy)
+	fmt.Println("scheme", r.Scheme)
+
 	// Set the Hostan App instance as the owner and controller
-	ctrl.SetControllerReference(app, deploy, r.Scheme)
+	ctrl.SetControllerReference(
+		app,
+		deploy,
+		r.Scheme,
+	)
 
 	return deploy
 }
@@ -615,7 +685,7 @@ func (r *AppReconciler) providerConfigMapForAppUse(app *hostanv1alpha1.App, prov
 	}
 
 	for _, kv := range res.ConfigVariables {
-		configMap.Data[kv.Name] = kv.Value
+		configMap.Data[strcase.ToScreamingSnake(kv.Name)] = kv.Value
 	}
 
 	ctrl.SetControllerReference(app, configMap, r.Scheme)

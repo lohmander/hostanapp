@@ -62,8 +62,7 @@ type AppSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	Services []AppService `json:"services"`
 
-	// +kubebuilder:validation:Optional
-	Uses []AppUse `json:"uses"`
+	Uses []AppUse `json:"uses,omitempty"`
 }
 
 // AppStatus defines the observed state of App

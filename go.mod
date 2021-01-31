@@ -3,8 +3,9 @@ module github.com/lohmander/hostanapp
 go 1.13
 
 require (
-	github.com/go-logr/logr v0.1.0
+	github.com/go-logr/logr v0.2.0
 	github.com/golang/protobuf v1.4.3
+	github.com/iancoleman/strcase v0.1.3
 	github.com/onsi/ginkgo v1.12.1
 	github.com/onsi/gomega v1.10.1
 	golang.org/x/net v0.0.0-20201224014010-6772e930b67b // indirect
@@ -15,7 +16,8 @@ require (
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.0.1 // indirect
 	google.golang.org/protobuf v1.25.0
 	k8s.io/api v0.18.6
-	k8s.io/apimachinery v0.18.6
+	k8s.io/apimachinery v0.19.2
 	k8s.io/client-go v0.18.6
 	sigs.k8s.io/controller-runtime v0.6.2
+	sigs.k8s.io/kind v0.10.0 // indirect
 )
