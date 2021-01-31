@@ -5,7 +5,7 @@ metadata:
   name: app-viewer-role
 rules:
 - apiGroups:
-  - hostan.hostan.app
+  - app.hostan.app
   resources:
   - apps
   verbs:
@@ -13,7 +13,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - hostan.hostan.app
+  - app.hostan.app
   resources:
   - apps/status
   verbs:

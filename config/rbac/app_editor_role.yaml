@@ -5,7 +5,7 @@ metadata:
   name: app-editor-role
 rules:
 - apiGroups:
-  - hostan.hostan.app
+  - app.hostan.app
   resources:
   - apps
   verbs:
@@ -17,7 +17,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - hostan.hostan.app
+  - app.hostan.app
   resources:
   - apps/status
   verbs:

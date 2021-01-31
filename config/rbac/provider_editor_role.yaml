@@ -5,7 +5,7 @@ metadata:
   name: provider-editor-role
 rules:
 - apiGroups:
-  - hostan.hostan.app
+  - app.hostan.app
   resources:
   - providers
   verbs:
@@ -17,7 +17,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - hostan.hostan.app
+  - app.hostan.app
   resources:
   - providers/status
   verbs:

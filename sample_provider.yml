@@ -1,6 +1,0 @@
-apiVersion: hostan.hostan.app/v1alpha1
-kind: Provider
-metadata:
-  name: hello-provider
-spec:
-  url: localhost:5000

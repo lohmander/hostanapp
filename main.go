@@ -21,13 +21,12 @@ import (
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	hostanv1alpha1 "github.com/lohmander/hostanapp/api/v1alpha1"
+	appv1 "github.com/lohmander/hostanapp/api/v1"
 	"github.com/lohmander/hostanapp/controllers"
 	// +kubebuilder:scaffold:imports
 )
@@ -38,9 +37,9 @@ var (
 )
 
 func init() {
-	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	_ = clientgoscheme.AddToScheme(scheme)
 
-	utilruntime.Must(hostanv1alpha1.AddToScheme(scheme))
+	_ = appv1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -61,7 +60,6 @@ func main() {
 		Port:               9443,
 		LeaderElection:     enableLeaderElection,
 		LeaderElectionID:   "36fad231.hostan.app",
-		Namespace:          "",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
