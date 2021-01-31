@@ -2,6 +2,8 @@
 
 `/ˈhʊsˌtan/` app
 
+![Go Report Card](https://goreportcard.com/badge/github.com/lohmander/hostanapp)
+
 Hostan provides a set of Kubernetes primitives to easily and rapidly deploy apps on a cluster that uses services like databases, object storage, etc. "Hostan" is a Swedish
 word that translates to "the cough."
 
@@ -9,8 +11,8 @@ word that translates to "the cough."
 
 - [x] Create README outlining the future functionality
 - [x] Implement CRD and controller for the App resource
-- [ ] Implement CRD and controller for the Provider resource
-- [ ] Create spec/protobuf file for the provider interface
+- [x] Implement CRD and controller for the Provider resource
+- [x] Create spec/protobuf file for the provider interface
 - [ ] Create config maps and secrets for config upon reconciliation
 
 ### What it looks like (WIP)
