@@ -34,9 +34,7 @@ spec:
         spec:
           description: ProviderSpec defines the desired state of Provider
           properties:
-            foo:
-              description: Foo is an example field of Provider. Edit Provider_types.go
-                to remove/update
+            url:
               type: string
           type: object
         status:

@@ -24,7 +24,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	appv1 "github.com/lohmander/hostanapp/api/v1"
+	hostanv1alpha1 "github.com/lohmander/hostanapp/api/v1"
 )
 
 // ProviderReconciler reconciles a Provider object
@@ -34,20 +34,21 @@ type ProviderReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=app.hostan.app,resources=providers,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=app.hostan.app,resources=providers/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=hostan.hostan.app,resources=providers,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=hostan.hostan.app,resources=providers/status,verbs=get;update;patch
 
 func (r *ProviderReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	_ = context.Background()
 	_ = r.Log.WithValues("provider", req.NamespacedName)
 
-	// your logic here
+	// there's not really any reconciliation necessary here, the controller is not
+	// responsible for deploying the provider
 
 	return ctrl.Result{}, nil
 }
 
 func (r *ProviderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&appv1.Provider{}).
+		For(&hostanv1alpha1.Provider{}).
 		Complete(r)
 }

@@ -7,7 +7,19 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - app.hostan.app
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - hostan.hostan.app
   resources:
   - apps
   verbs:
@@ -19,7 +31,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - app.hostan.app
+  - hostan.hostan.app
   resources:
   - apps/status
   verbs:
@@ -27,7 +39,7 @@ rules:
   - patch
   - update
 - apiGroups:
-  - app.hostan.app
+  - hostan.hostan.app
   resources:
   - providers
   verbs:
@@ -39,7 +51,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - app.hostan.app
+  - hostan.hostan.app
   resources:
   - providers/status
   verbs:

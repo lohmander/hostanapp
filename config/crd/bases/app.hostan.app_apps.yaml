@@ -34,9 +34,62 @@ spec:
         spec:
           description: AppSpec defines the desired state of App
           properties:
-            foo:
-              description: Foo is an example field of App. Edit App_types.go to remove/update
-              type: string
+            services:
+              items:
+                description: AppService defines a service that constitutes part of
+                  an app
+                properties:
+                  command:
+                    items:
+                      type: string
+                    type: array
+                  image:
+                    minLength: 1
+                    type: string
+                  ingress:
+                    description: AppServiceIngress represents some basic config for
+                      ingresses
+                    properties:
+                      host:
+                        type: string
+                      path:
+                        type: string
+                    required:
+                    - host
+                    type: object
+                  name:
+                    maxLength: 20
+                    minLength: 3
+                    type: string
+                  port:
+                    format: int32
+                    type: integer
+                required:
+                - image
+                - ingress
+                - name
+                - port
+                type: object
+              minItems: 1
+              type: array
+            uses:
+              items:
+                description: AppUse defines something `provided` that an app uses
+                properties:
+                  config:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  name:
+                    maxLength: 20
+                    minLength: 3
+                    type: string
+                required:
+                - name
+                type: object
+              type: array
+          required:
+          - services
           type: object
         status:
           description: AppStatus defines the observed state of App
