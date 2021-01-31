@@ -228,8 +228,7 @@ func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha
 
 	for _, service := range app.Spec.Services {
 		// Reconcile deployments
-		// deploy := r.deploymentForAppService(app, service, providerConfigMaps.Items)
-		deploy := r.deploymentForAppService(app, service, []corev1.ConfigMap{})
+		deploy := r.deploymentForAppService(app, service, providerConfigMaps.Items)
 
 		found := &appsv1.Deployment{}
 		err = r.Get(ctx, types.NamespacedName{Name: deploy.Name, Namespace: app.Namespace}, found)
@@ -289,10 +288,6 @@ func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha
 			return false
 		}
 
-		if container.EnvFrom == nil && len(providerConfigMaps.Items) > 0 {
-			updated = true
-		}
-
 		for _, envFrom := range container.EnvFrom {
 			if !inConfigMapList(envFrom.ConfigMapRef.Name, providerConfigMaps) {
 				updated = true
@@ -306,8 +301,6 @@ func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha
 		}
 
 		container.EnvFrom = deploy.Spec.Template.Spec.Containers[0].EnvFrom
-
-		log.Info("EnvFrom items", "Items", container.EnvFrom)
 
 		// If any property was updated, update the deployment and requeue
 		if updated {
