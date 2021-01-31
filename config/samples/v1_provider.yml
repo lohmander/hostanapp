@@ -1,0 +1,6 @@
+apiVersion: app.hostan.app/v1
+kind: Provider
+metadata:
+  name: echo
+spec:
+  url: localhost:5000

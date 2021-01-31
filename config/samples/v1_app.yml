@@ -9,5 +9,7 @@ spec:
       port: 80
       ingress:
         host: localhost
-  # uses:
-  #   - name: hello-provider
+  uses:
+    - name: echo
+      config:
+        ping: pong

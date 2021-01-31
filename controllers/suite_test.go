@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	appv1 "github.com/lohmander/hostanapp/api/v1"
+	echo_provider "github.com/lohmander/hostanapp/echo_provider/server"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -93,6 +94,11 @@ var _ = BeforeSuite(func(done Done) {
 	go func() {
 		err = k8sManager.Start(ctrl.SetupSignalHandler())
 		Expect(err).ToNot(HaveOccurred())
+	}()
+
+	go func() {
+		echo := echo_provider.EchoProviderServer{}
+		echo.Serve(5000)
 	}()
 
 	k8sClient = k8sManager.GetClient()

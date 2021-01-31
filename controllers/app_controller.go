@@ -289,6 +289,10 @@ func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha
 			return false
 		}
 
+		if container.EnvFrom == nil && len(providerConfigMaps.Items) > 0 {
+			updated = true
+		}
+
 		for _, envFrom := range container.EnvFrom {
 			if !inConfigMapList(envFrom.ConfigMapRef.Name, providerConfigMaps) {
 				updated = true
@@ -302,6 +306,8 @@ func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha
 		}
 
 		container.EnvFrom = deploy.Spec.Template.Spec.Containers[0].EnvFrom
+
+		log.Info("EnvFrom items", "Items", container.EnvFrom)
 
 		// If any property was updated, update the deployment and requeue
 		if updated {
@@ -326,7 +332,8 @@ func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha
 		_, err = r.reconcileIngress(log, app, service)
 
 		if err != nil {
-			log.Error(err, "Failed to reconcile Ingress", service.Name)
+			log.Error(err, "Failed to reconcile Ingress", "Name", service.Name)
+			return ctrl.Result{}, err
 		}
 	}
 
@@ -444,8 +451,8 @@ func (r *AppReconciler) reconcileIngress(log logr.Logger, app *hostanv1alpha1.Ap
 			err = r.Create(ctx, ingress)
 
 			if err != nil {
-				log.Error(err, "Failed to create new Ingress for", ingress.Name)
-				return ctrl.Result{}, nil
+				log.Error(err, "Failed to create new Ingress for", "Name", ingress.Name)
+				return ctrl.Result{}, err
 			}
 
 			return ctrl.Result{Requeue: true}, nil
