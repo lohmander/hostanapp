@@ -2,6 +2,7 @@
 
 `/ˈhʊsˌtan/` app
 
+![CI Status](https://github.com/lohmander/hostanapp/workflows/CI/badge.svg)
 ![Go Report Card](https://goreportcard.com/badge/github.com/lohmander/hostanapp)
 
 Hostan provides a set of Kubernetes primitives to easily and rapidly deploy apps on a cluster that uses services like databases, object storage, etc. "Hostan" is a Swedish
