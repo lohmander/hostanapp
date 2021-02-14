@@ -59,3 +59,25 @@ func CreateConfigHash(config map[string]string) (*string, error) {
 
 	return &hashString, nil
 }
+
+// Find finds a value in a slice
+func Find(s interface{}, fn func(interface{}) bool) interface{} {
+	for _, x := range s.([]interface{}) {
+		if fn(x) {
+			return x
+		}
+	}
+
+	return nil
+}
+
+// StringSliceIncludes checks if a string slice includes a string
+func StringSliceIncludes(s []string, str string) bool {
+	for _, x := range s {
+		if x == str {
+			return true
+		}
+	}
+
+	return false
+}

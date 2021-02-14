@@ -38,8 +38,8 @@ import (
 	"github.com/lohmander/hostanapp/utils"
 )
 
-// AppReconciler reconciles a App object
-type AppReconciler struct {
+// AppXReconciler reconciles a App object
+type AppXReconciler struct {
 	client.Client
 	Log    logr.Logger
 	Scheme *runtime.Scheme
@@ -60,7 +60,7 @@ func getProviderWithName(providers *hostanv1alpha1.ProviderList, name string) (*
 }
 
 // Reconcile implements the reconcile loop
-func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+func (r *AppXReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	log := r.Log.WithValues("app", req.NamespacedName)
 
@@ -88,7 +88,7 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	return r.reconcileAppServices(log, app)
 }
 
-func (r *AppReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.App) (ctrl.Result, error) {
+func (r *AppXReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.App) (ctrl.Result, error) {
 	// Not all apps has uses
 	if app.Spec.Uses == nil {
 		return ctrl.Result{}, nil
@@ -215,7 +215,7 @@ func (r *AppReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.
 	return ctrl.Result{}, nil
 }
 
-func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha1.App) (ctrl.Result, error) {
+func (r *AppXReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha1.App) (ctrl.Result, error) {
 	var err error
 	ctx := context.Background()
 
@@ -361,7 +361,7 @@ func (r *AppReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha
 	return ctrl.Result{}, nil
 }
 
-func (r *AppReconciler) reconcileService(log logr.Logger, app *hostanv1alpha1.App, service hostanv1alpha1.AppService) (ctrl.Result, error) {
+func (r *AppXReconciler) reconcileService(log logr.Logger, app *hostanv1alpha1.App, service hostanv1alpha1.AppService) (ctrl.Result, error) {
 	ctx := context.Background()
 	svc := r.serviceForAppService(app, service)
 	found := &corev1.Service{}
@@ -429,7 +429,7 @@ func (r *AppReconciler) reconcileService(log logr.Logger, app *hostanv1alpha1.Ap
 	return ctrl.Result{}, nil
 }
 
-func (r *AppReconciler) reconcileIngress(log logr.Logger, app *hostanv1alpha1.App, service hostanv1alpha1.AppService) (ctrl.Result, error) {
+func (r *AppXReconciler) reconcileIngress(log logr.Logger, app *hostanv1alpha1.App, service hostanv1alpha1.AppService) (ctrl.Result, error) {
 	var err error
 	ctx := context.Background()
 
@@ -529,7 +529,7 @@ func (r *AppReconciler) reconcileIngress(log logr.Logger, app *hostanv1alpha1.Ap
 	return ctrl.Result{}, nil
 }
 
-func (r *AppReconciler) deploymentForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService, providerConfigMaps []corev1.ConfigMap) *appsv1.Deployment {
+func (r *AppXReconciler) deploymentForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService, providerConfigMaps []corev1.ConfigMap) *appsv1.Deployment {
 	var replicas int32 = 1
 	var envFrom []corev1.EnvFromSource
 
@@ -582,7 +582,7 @@ func (r *AppReconciler) deploymentForAppService(app *hostanv1alpha1.App, service
 	return deploy
 }
 
-func (r *AppReconciler) serviceForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) *corev1.Service {
+func (r *AppXReconciler) serviceForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) *corev1.Service {
 	name := nameForService(app, service)
 	labels := labelsForServiceDeployment(app, service)
 	svc := &corev1.Service{
@@ -607,7 +607,7 @@ func (r *AppReconciler) serviceForAppService(app *hostanv1alpha1.App, service ho
 	return svc
 }
 
-func (r *AppReconciler) ingressForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) *netv1.Ingress {
+func (r *AppXReconciler) ingressForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) *netv1.Ingress {
 	name := nameForService(app, service)
 	labels := labelsForServiceDeployment(app, service)
 	ingress := &netv1.Ingress{
@@ -640,7 +640,7 @@ func (r *AppReconciler) ingressForAppService(app *hostanv1alpha1.App, service ho
 	return ingress
 }
 
-func (r *AppReconciler) providerConfigMapForAppUse(app *hostanv1alpha1.App, provider_ *hostanv1alpha1.Provider, use *hostanv1alpha1.AppUse) (*corev1.ConfigMap, error) {
+func (r *AppXReconciler) providerConfigMapForAppUse(app *hostanv1alpha1.App, provider_ *hostanv1alpha1.Provider, use *hostanv1alpha1.AppUse) (*corev1.ConfigMap, error) {
 	providerClient, err := provider.NewClient(provider_.Spec.URL)
 
 	if err != nil {
@@ -697,7 +697,7 @@ func labelsForServiceDeployment(app *hostanv1alpha1.App, service hostanv1alpha1.
 	}
 }
 
-func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *AppXReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hostanv1alpha1.App{}).
 		Complete(r)

@@ -25,6 +25,11 @@ func (*EchoProviderServer) ProvisionAppConfig(ctx context.Context, req *provider
 			Name:  k,
 			Value: v,
 		})
+		configVars = append(configVars, &provider.ConfigVariable{
+			Name:   fmt.Sprintf("secret-%s", k),
+			Value:  v,
+			Secret: true,
+		})
 	}
 
 	return &provider.ProvisionAppConfigResponse{
