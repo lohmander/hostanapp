@@ -17,12 +17,15 @@ limitations under the License.
 package controllers
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -40,9 +43,21 @@ import (
 // These tests use Ginkgo (BDD-style Go testing framework). Refer to
 // http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
+const AppNamespace = "test-app-namespace"
+
 var cfg *rest.Config
 var k8sClient client.Client
 var testEnv *envtest.Environment
+
+var namespace = &v1.Namespace{
+	TypeMeta: metav1.TypeMeta{
+		APIVersion: "v1",
+		Kind:       "Namespace",
+	},
+	ObjectMeta: metav1.ObjectMeta{
+		Name: AppNamespace,
+	},
+}
 
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -101,11 +116,18 @@ var _ = BeforeSuite(func(done Done) {
 	k8sClient = k8sManager.GetClient()
 	Expect(k8sClient).ToNot(BeNil())
 
+	ctx := context.Background()
+	Expect(k8sClient.Create(ctx, namespace)).Should(Succeed())
+
 	close(done)
 }, 60)
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
+
+	ctx := context.Background()
+	Expect(k8sClient.Delete(ctx, namespace)).Should(Succeed())
+
 	err := testEnv.Stop()
 	Expect(err).ToNot(HaveOccurred())
 })

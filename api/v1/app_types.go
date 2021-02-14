@@ -51,7 +51,7 @@ type AppUse struct {
 	Name string `json:"name"`
 
 	// +kubebuilder:validation:Optional
-	Config map[string]string `json:"config"`
+	Config map[string]string `json:"config,omitempty"`
 }
 
 // AppSpec defines the desired state of App
