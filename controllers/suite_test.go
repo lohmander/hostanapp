@@ -17,6 +17,7 @@ limitations under the License.
 package controllers
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -55,17 +56,17 @@ var _ = BeforeSuite(func(done Done) {
 	logf.SetLogger(zap.LoggerTo(GinkgoWriter, true))
 
 	By("bootstrapping test environment")
+
+	useExistingCluster := os.Getenv("USE_EXISTING_CLUSTER") == "1"
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths: []string{filepath.Join("..", "config", "crd", "bases")},
+		UseExistingCluster: &useExistingCluster,
+		CRDDirectoryPaths:  []string{filepath.Join("..", "config", "crd", "bases")},
 	}
 
 	var err error
 	cfg, err = testEnv.Start()
 	Expect(err).ToNot(HaveOccurred())
 	Expect(cfg).ToNot(BeNil())
-
-	// err = appv1.AddToScheme(scheme.Scheme)
-	// Expect(err).NotTo(HaveOccurred())
 
 	err = scheme.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
@@ -74,10 +75,6 @@ var _ = BeforeSuite(func(done Done) {
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
-
-	// k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
-	// Expect(err).ToNot(HaveOccurred())
-	// Expect(k8sClient).ToNot(BeNil())
 
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
@@ -98,7 +95,7 @@ var _ = BeforeSuite(func(done Done) {
 
 	go func() {
 		echo := echo_provider.EchoProviderServer{}
-		echo.Serve(5000)
+		echo.Serve(5005)
 	}()
 
 	k8sClient = k8sManager.GetClient()
