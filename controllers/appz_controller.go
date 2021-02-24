@@ -33,7 +33,7 @@ import (
 	"github.com/lohmander/hostanapp/utils"
 )
 
-type AppReconciler struct {
+type AppZReconciler struct {
 	client.Client
 	Log    logr.Logger
 	Scheme *runtime.Scheme
@@ -43,7 +43,7 @@ type AppReconciler struct {
 // +kubebuilder:rbac:groups=app.hostan.app,resources=apps/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
-func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+func (r *AppZReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	var err error
 
 	ctx := context.Background()
@@ -314,7 +314,7 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	return ctrl.Result{}, nil
 }
 
-func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *AppZReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hostanv1.App{}).
 		Complete(r)
