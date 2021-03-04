@@ -117,7 +117,7 @@ var _ = Describe("App controller", func() {
 			}, timeout, interval).Should(Succeed())
 		})
 
-		It("Should create kubernetes services", func() {
+		It("Should create kubernetes ingress", func() {
 			ctx := context.Background()
 
 			Eventually(func() error {

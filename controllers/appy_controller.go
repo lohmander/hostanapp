@@ -30,6 +30,7 @@ import (
 	hostanv1 "github.com/lohmander/hostanapp/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	netv1 "k8s.io/api/networking/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -86,6 +87,8 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	return ctrl.Result{}, nil
 }
 
+// AllDesiredObjects returns a list of resources that are part of the "desired" state that we
+// will attempt to reconcile towards
 func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) ([]plan.Resource, error) {
 	var objects []plan.Resource
 
@@ -93,8 +96,17 @@ func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) (
 		objects = append(objects, &UseStateObject{r, use, app})
 	}
 
+	hasIngress := false
+
 	for _, service := range app.Spec.Services {
 		objects = append(objects, &ServiceStateObject{r, service, app})
+
+		if service.Ingress != nil {
+			hasIngress = true
+		}
+	}
+
+	if hasIngress {
 		objects = append(objects, &IngressStateObject{r, app})
 	}
 
@@ -114,7 +126,48 @@ func (is *IngressStateObject) ToString() string {
 	return fmt.Sprintf("ing:%s", is.App.Name)
 }
 
-func (is *IngressStateObject) Create() error { return nil }
+func (is *IngressStateObject) Create() error {
+	ctx := context.Background()
+	meta := metav1.ObjectMeta{
+		Name:      is.App.Name,
+		Namespace: is.App.Namespace,
+	}
+
+	rules := []netv1.IngressRule{}
+
+	for _, service := range is.App.Spec.Services {
+		if service.Ingress != nil {
+			rules = append(rules, netv1.IngressRule{
+				Host: service.Ingress.Host,
+				IngressRuleValue: netv1.IngressRuleValue{
+					HTTP: &netv1.HTTPIngressRuleValue{
+						Paths: []netv1.HTTPIngressPath{
+							{
+								Path: service.Ingress.Path,
+								Backend: netv1.IngressBackend{
+									ServiceName: ServiceName(is.App, service),
+									ServicePort: intstr.FromInt(int(service.Port)),
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+	}
+
+	ingress := netv1.Ingress{
+		ObjectMeta: meta,
+		Spec: netv1.IngressSpec{
+			Rules: rules,
+		},
+	}
+
+	ctrl.SetControllerReference(is.App, &ingress, is.Reconciler.Scheme)
+
+	return is.Reconciler.Create(ctx, &ingress)
+}
+
 func (is *IngressStateObject) Update() error { return nil }
 func (is *IngressStateObject) Delete() error { return nil }
 
