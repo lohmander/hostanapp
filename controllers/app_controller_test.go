@@ -125,4 +125,26 @@ var _ = Describe("App controller", func() {
 			}, timeout, interval).Should(Succeed())
 		})
 	})
+
+	Context("Update an app", func() {
+		It("Should update a config map with new config", func() {
+			ctx := context.Background()
+
+			app.Spec.Uses[0].Config = map[string]string{
+				"HELLO": "TEST",
+			}
+
+			k8sClient.Update(ctx, app)
+
+			Eventually(func() string {
+				configMap := corev1.ConfigMap{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, app.Spec.Uses[0])}, &configMap)
+
+				if err != nil {
+					return ""
+				}
+				return configMap.Data["HELLO"]
+			}, timeout, interval).Should(Equal("TEST"))
+		})
+	})
 })

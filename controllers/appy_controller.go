@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/lohmander/hostanapp/plan"
+	"github.com/lohmander/hostanapp/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -93,7 +94,7 @@ func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) (
 	var objects []plan.Resource
 
 	for _, use := range app.Spec.Uses {
-		objects = append(objects, &UseStateObject{r, use, app})
+		objects = append(objects, &UseStateObject{r, use, app, nil, nil})
 	}
 
 	hasIngress := false
@@ -253,13 +254,51 @@ func (sso *ServiceStateObject) Create() error {
 func (sso *ServiceStateObject) Update() error { return nil }
 func (sso *ServiceStateObject) Delete() error { return nil }
 
+func ProvisionFromProvider(reconciler *AppReconciler, provider string, app string, config map[string]string) (map[string]string, map[string]string, error) {
+	ctx := context.Background()
+	providers := hostanv1.ProviderList{}
+
+	if err := reconciler.List(ctx, &providers); err != nil {
+		return nil, nil, err
+	}
+
+	providerClientSet := &ProviderClientSet{providers}
+	providerClient, err := providerClientSet.Get(provider)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return providerClient.Provision(app, config)
+}
+
 type UseStateObject struct {
 	Reconciler *AppReconciler
 	Use        hostanv1.AppUse
 	App        *hostanv1.App
+	ConfigMap  *corev1.ConfigMap
+	Secret     *corev1.Secret
 }
 
 func (cm *UseStateObject) Changed() bool {
+	configHash, err := utils.CreateConfigHash(cm.Use.Config)
+
+	if err != nil {
+		return false
+	}
+
+	if cm.ConfigMap != nil {
+		if cm.ConfigMap.Annotations[AnnotationConfigHash] != *configHash {
+			return true
+		}
+	}
+
+	if cm.Secret != nil {
+		if cm.Secret.Annotations[AnnotationConfigHash] != *configHash {
+			return true
+		}
+	}
+
 	return false
 }
 
@@ -277,20 +316,20 @@ func ServiceName(app *hostanv1.App, service hostanv1.AppService) string {
 
 func (cm *UseStateObject) Create() error {
 	ctx := context.Background()
-	providers := hostanv1.ProviderList{}
+	// providers := hostanv1.ProviderList{}
 
-	if err := cm.Reconciler.List(ctx, &providers); err != nil {
-		return err
-	}
+	// if err := cm.Reconciler.List(ctx, &providers); err != nil {
+	// 	return err
+	// }
 
-	providerClientSet := &ProviderClientSet{providers}
-	providerClient, err := providerClientSet.Get(cm.Use.Name)
+	// providerClientSet := &ProviderClientSet{providers}
+	// providerClient, err := providerClientSet.Get(cm.Use.Name)
 
-	if err != nil {
-		return err
-	}
+	// if err != nil {
+	// 	return err
+	// }
 
-	configData, secretData, err := providerClient.Provision(cm.App.Name, cm.Use.Config)
+	configData, secretData, err := ProvisionFromProvider(cm.Reconciler, cm.Use.Name, cm.App.Name, cm.Use.Config)
 
 	if err != nil {
 		return err
@@ -300,7 +339,8 @@ func (cm *UseStateObject) Create() error {
 		Name:      UseConfigName(cm.App, cm.Use),
 		Namespace: cm.App.Namespace,
 		Labels: map[string]string{
-			LabelApp: cm.App.Name,
+			LabelApp:      cm.App.Name,
+			LabelProvider: cm.Use.Name,
 		},
 	}
 	configMap := corev1.ConfigMap{
@@ -326,7 +366,35 @@ func (cm *UseStateObject) Create() error {
 	return cm.Reconciler.Create(ctx, &secret)
 }
 
-func (cm *UseStateObject) Update() error { return nil }
+func (cm *UseStateObject) Update() error {
+	configData, secretData, err := ProvisionFromProvider(cm.Reconciler, cm.Use.Name, cm.App.Name, cm.Use.Config)
+
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	if cm.ConfigMap != nil {
+		cm.ConfigMap.Data = configData
+		err = cm.Reconciler.Update(ctx, cm.ConfigMap)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	if cm.Secret != nil {
+		cm.Secret.StringData = secretData
+		err = cm.Reconciler.Update(ctx, cm.Secret)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
 func (cm *UseStateObject) Delete() error { return nil }
 
 func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) ([]plan.Resource, error) {
@@ -343,8 +411,27 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		return nil, err
 	}
 
+	useMap := map[string]*UseStateObject{}
+
+	toMapKey := func(labels map[string]string) string {
+		return fmt.Sprintf("%s::%s", labels[LabelApp], labels[LabelProvider])
+	}
+
 	for _, cm := range configMapList.Items {
-		objects = append(objects, &ConfigMapStateObject{&cm, app})
+		var appUse hostanv1.AppUse
+		key := toMapKey(cm.Labels)
+		provider := cm.Labels[LabelProvider]
+
+		for _, use := range app.Spec.Uses {
+			if use.Name == provider {
+				appUse = use
+			}
+		}
+
+		useMap[key] = &UseStateObject{
+			r, appUse, app, &cm, nil,
+		}
+		// objects = append(objects, &ConfigMapStateObject{&cm, app})
 	}
 
 	secretList := corev1.SecretList{}
@@ -353,8 +440,30 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		return nil, err
 	}
 
-	for _, cm := range secretList.Items {
-		objects = append(objects, &SecretStateObject{&cm, app})
+	for _, sec := range secretList.Items {
+		var appUse hostanv1.AppUse
+		key := toMapKey(sec.Labels)
+		provider := sec.Labels[LabelProvider]
+
+		for _, use := range app.Spec.Uses {
+			if use.Name == provider {
+				appUse = use
+			}
+		}
+
+		if _, ok := useMap[key]; ok {
+			useMap[key].Secret = &sec
+		} else {
+			useMap[key] = &UseStateObject{
+				r, appUse, app, nil, &sec,
+			}
+		}
+
+		// objects = append(objects, &SecretStateObject{&cm, app})
+	}
+
+	for _, use := range useMap {
+		objects = append(objects, use)
 	}
 
 	return objects, nil
@@ -362,11 +471,30 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 }
 
 type ConfigMapStateObject struct {
-	ConfigMap *corev1.ConfigMap
-	App       *hostanv1.App
+	Reconciler *AppReconciler
+	ConfigMap  *corev1.ConfigMap
+	App        *hostanv1.App
 }
 
 func (cm *ConfigMapStateObject) Changed() bool {
+	var appUse hostanv1.AppUse
+
+	for _, use := range cm.App.Spec.Uses {
+		if use.Name == cm.ConfigMap.ObjectMeta.Labels[LabelProvider] {
+			appUse = use
+		}
+	}
+
+	configHash, err := utils.CreateConfigHash(appUse.Config)
+
+	if err != nil {
+		return false
+	}
+
+	if cm.ConfigMap.Annotations[AnnotationConfigHash] != *configHash {
+		return true
+	}
+
 	return false
 }
 
@@ -375,7 +503,10 @@ func (cm *ConfigMapStateObject) ToString() string {
 }
 
 func (cm *ConfigMapStateObject) Create() error { return nil }
-func (cm *ConfigMapStateObject) Update() error { return nil }
+func (cm *ConfigMapStateObject) Update() error {
+	return nil
+}
+
 func (cm *ConfigMapStateObject) Delete() error { return nil }
 
 type SecretStateObject struct {
