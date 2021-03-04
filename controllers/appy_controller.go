@@ -131,6 +131,9 @@ func (is *IngressStateObject) Create() error {
 	meta := metav1.ObjectMeta{
 		Name:      is.App.Name,
 		Namespace: is.App.Namespace,
+		Labels: map[string]string{
+			LabelApp: is.App.Name,
+		},
 	}
 
 	rules := []netv1.IngressRule{}
