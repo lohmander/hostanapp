@@ -317,5 +317,26 @@ var _ = Describe("App controller", func() {
 				return errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: app.Name}, &netv1.Ingress{}))
 			}, timeout, interval).Should(BeTrue())
 		})
+
+		It("Should delete a deployment if its not present as an app service", func() {
+			ctx := context.Background()
+			appService := app.Spec.Services[1]
+
+			By("First check that it succeeds at getting the deployment")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, appService)}, &appsv1.Deployment{})
+			}, timeout, interval).Should(Succeed())
+
+			app.Spec.Services = []hostanv1.AppService{app.Spec.Services[0]}
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			By("And then check that it is deleted")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, appService)}, &appsv1.Deployment{})
+				// return errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, appService)}, &appsv1.Deployment{}))
+			}, timeout, interval).ShouldNot(Succeed())
+			// }, timeout, interval).Should(BeTrue())
+		})
 	})
 })

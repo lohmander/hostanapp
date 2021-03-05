@@ -224,8 +224,10 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 			}
 		}
 
+		// If app service is removed, we won't find any, but we still need a temporary representation
+		// in the ServiceStateObjects before the k8s resource is removed
 		if appService == nil {
-			continue
+			appService = &hostanv1.AppService{}
 		}
 
 		serviceMap[deploy.Name] = &ServiceStateObject{
@@ -234,6 +236,7 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 	}
 
 	for _, service := range serviceMap {
+
 		objects = append(objects, service)
 	}
 
@@ -379,7 +382,20 @@ func (sso *ServiceStateObject) Update() error {
 }
 
 func (sso *ServiceStateObject) Delete() error {
-	// ctx := context.Background()
+	ctx := context.Background()
+
+	if sso.Deployment != nil {
+		if err := sso.Reconciler.Delete(ctx, sso.Deployment); err != nil {
+			return err
+		}
+	}
+
+	if sso.Service != nil {
+		if err := sso.Reconciler.Delete(ctx, sso.Service); err != nil {
+			return err
+		}
+	}
+
 	return nil
 
 }
