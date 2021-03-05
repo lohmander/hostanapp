@@ -7,6 +7,7 @@ require (
 	github.com/go-logr/logr v0.1.0
 	github.com/golang/protobuf v1.4.2
 	github.com/iancoleman/strcase v0.1.3
+	github.com/olekukonko/tablewriter v0.0.5
 	github.com/onsi/ginkgo v1.11.0
 	github.com/onsi/gomega v1.8.1
 	github.com/thoas/go-funk v0.7.0

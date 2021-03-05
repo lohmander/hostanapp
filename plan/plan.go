@@ -1,11 +1,11 @@
 package plan
 
 import (
-	"fmt"
-	"strings"
+	"bytes"
 
 	"github.com/fatih/color"
 	"github.com/lohmander/hostanapp/sliceutils"
+	"github.com/olekukonko/tablewriter"
 	"github.com/thoas/go-funk"
 )
 
@@ -71,18 +71,23 @@ func Make(current, desired interface{}) (*Plan, error) {
 
 // Describe describes the plan
 func (p *Plan) Describe() string {
-	steps := []string{}
 	actions := map[Action]string{
 		ActionDelete: color.New(color.BgRed, color.FgBlack).SprintFunc()("DELETE"),
 		ActionUpdate: color.New(color.BgCyan, color.FgBlack).SprintFunc()("UPDATE"),
 		ActionCreate: color.New(color.BgGreen, color.FgBlack).SprintFunc()("CREATE"),
 	}
 
+	buf := new(bytes.Buffer)
+	table := tablewriter.NewWriter(buf)
+	table.SetHeader([]string{"ACTION", "OBJECT", "REASON"})
+
 	for _, step := range p.Steps {
-		steps = append(steps, fmt.Sprintf("%s: %s\t\t– %s", actions[step.Action], step.Object.ToString(), step.Reason))
+		table.Append([]string{actions[step.Action], step.Object.ToString(), step.Reason})
 	}
 
-	return fmt.Sprintf("\n%s\n", strings.Join(steps, "\n"))
+	table.Render()
+
+	return buf.String()
 }
 
 // Execute executes a plan

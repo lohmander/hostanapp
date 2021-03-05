@@ -78,7 +78,6 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	p, err := plan.Make(current, desired)
 
-	fmt.Println("\nWill execute plan:")
 	fmt.Println(p.Describe())
 
 	if err := p.Execute(); err != nil {
