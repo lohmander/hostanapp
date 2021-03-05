@@ -42,6 +42,14 @@ const (
 	AnnotationConfigHash = "app.hostan.app/config-hash"
 )
 
+func UseConfigName(app *hostanv1.App, use hostanv1.AppUse) string {
+	return fmt.Sprintf("%s-%s", app.Name, use.Name)
+}
+
+func ServiceName(app *hostanv1.App, service hostanv1.AppService) string {
+	return fmt.Sprintf("%s-%s", app.Name, service.Name)
+}
+
 // AppReconciler reconciles a App object
 type AppReconciler struct {
 	client.Client
@@ -53,7 +61,7 @@ type AppReconciler struct {
 // +kubebuilder:rbac:groups=hostan.hostan.app,resources=apps/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile implements the reconcile loop
+// Reconcile implements the reconciliation loop
 func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	var err error
 
@@ -113,103 +121,120 @@ func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) (
 	return objects, nil
 }
 
-type IngressStateObject struct {
-	Reconciler *AppReconciler
-	App        *hostanv1.App
-	Ingress    *netv1.Ingress
-}
+func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) ([]plan.Resource, error) {
+	var objects []plan.Resource
 
-func (is *IngressStateObject) Changed() bool {
-	if is.Ingress != nil {
-		for i, service := range is.App.Spec.Services {
-			if service.Ingress == nil {
-				return true
+	ctx := context.Background()
+	labelsSelector := client.MatchingLabels{LabelApp: req.Name}
+	namespace := client.InNamespace(req.Namespace)
+	selectors := []client.ListOption{namespace, labelsSelector}
+
+	configMapList := corev1.ConfigMapList{}
+
+	if err := r.List(ctx, &configMapList, selectors...); err != nil {
+		return nil, err
+	}
+
+	useMap := map[string]*UseStateObject{}
+
+	toMapKey := func(labels map[string]string) string {
+		return fmt.Sprintf("%s::%s", labels[LabelApp], labels[LabelProvider])
+	}
+
+	for _, cm := range configMapList.Items {
+		var appUse hostanv1.AppUse
+		key := toMapKey(cm.Labels)
+		provider := cm.Labels[LabelProvider]
+
+		for _, use := range app.Spec.Uses {
+			if use.Name == provider {
+				appUse = use
+				break
 			}
+		}
 
-			if len(is.Ingress.Spec.Rules) > i {
-				rule := is.Ingress.Spec.Rules[i]
-				if rule.Host != service.Ingress.Host {
-					return true
-				}
+		useMap[key] = &UseStateObject{
+			r, appUse, app, &cm, nil,
+		}
+	}
 
-				if rule.HTTP.Paths[0].Path != service.Ingress.Path {
-					return true
-				}
+	secretList := corev1.SecretList{}
+
+	if err := r.List(ctx, &secretList, selectors...); err != nil {
+		return nil, err
+	}
+
+	for _, sec := range secretList.Items {
+		var appUse hostanv1.AppUse
+		key := toMapKey(sec.Labels)
+		provider := sec.Labels[LabelProvider]
+
+		for _, use := range app.Spec.Uses {
+			if use.Name == provider {
+				appUse = use
+				break
+			}
+		}
+
+		if _, ok := useMap[key]; ok {
+			useMap[key].Secret = &sec
+		} else {
+			useMap[key] = &UseStateObject{
+				r, appUse, app, nil, &sec,
 			}
 		}
 	}
 
-	return false
-}
+	for _, use := range useMap {
+		objects = append(objects, use)
+	}
 
-func (is *IngressStateObject) ToString() string {
-	return fmt.Sprintf("ing:%s", is.App.Name)
-}
+	serviceMap := map[string]*ServiceStateObject{}
 
-func MakeIngressRules(app *hostanv1.App, services []hostanv1.AppService) []netv1.IngressRule {
-	rules := []netv1.IngressRule{}
+	deployList := appsv1.DeploymentList{}
 
-	for _, service := range services {
-		if service.Ingress != nil {
-			rules = append(rules, netv1.IngressRule{
-				Host: service.Ingress.Host,
-				IngressRuleValue: netv1.IngressRuleValue{
-					HTTP: &netv1.HTTPIngressRuleValue{
-						Paths: []netv1.HTTPIngressPath{
-							{
-								Path: service.Ingress.Path,
-								Backend: netv1.IngressBackend{
-									ServiceName: ServiceName(app, service),
-									ServicePort: intstr.FromInt(int(service.Port)),
-								},
-							},
-						},
-					},
-				},
-			})
+	if err := r.List(ctx, &deployList, selectors...); err != nil {
+		return nil, err
+	}
+
+	for _, deploy := range deployList.Items {
+		var appService hostanv1.AppService
+
+		for _, service := range app.Spec.Services {
+			if ServiceName(app, service) == deploy.Name {
+				appService = service
+				break
+			}
+		}
+
+		serviceMap[deploy.Name] = &ServiceStateObject{
+			r, appService, app, &deploy, nil,
 		}
 	}
 
-	return rules
-}
-
-func (is *IngressStateObject) Create() error {
-	ctx := context.Background()
-	meta := metav1.ObjectMeta{
-		Name:      is.App.Name,
-		Namespace: is.App.Namespace,
-		Labels: map[string]string{
-			LabelApp: is.App.Name,
-		},
+	for _, service := range serviceMap {
+		objects = append(objects, service)
 	}
 
-	ingress := netv1.Ingress{
-		ObjectMeta: meta,
-		Spec: netv1.IngressSpec{
-			Rules: MakeIngressRules(is.App, is.App.Spec.Services),
-		},
+	ingressList := netv1.IngressList{}
+
+	if err := r.List(ctx, &ingressList, selectors...); err != nil {
+		return nil, err
 	}
 
-	ctrl.SetControllerReference(is.App, &ingress, is.Reconciler.Scheme)
-
-	return is.Reconciler.Create(ctx, &ingress)
-}
-
-func (is *IngressStateObject) Update() error {
-	ctx := context.Background()
-	ingress := is.Ingress
-	ingress.Spec.Rules = MakeIngressRules(is.App, is.App.Spec.Services)
-
-	if err := is.Reconciler.Update(ctx, is.Ingress); err != nil {
-		return err
+	if len(ingressList.Items) > 0 {
+		objects = append(objects, &IngressStateObject{
+			r, app, &ingressList.Items[0],
+		})
 	}
 
-	return nil
+	return objects, nil
+
 }
-func (is *IngressStateObject) Delete() error {
-	ctx := context.Background()
-	return is.Reconciler.Delete(ctx, is.Ingress)
-}
+
+// Resource implementations
+
+// Services
 
 type ServiceStateObject struct {
 	Reconciler *AppReconciler
@@ -321,6 +346,16 @@ func (sso *ServiceStateObject) Update() error {
 
 func (sso *ServiceStateObject) Delete() error { return nil }
 
+// Uses
+
+type UseStateObject struct {
+	Reconciler *AppReconciler
+	Use        hostanv1.AppUse
+	App        *hostanv1.App
+	ConfigMap  *corev1.ConfigMap
+	Secret     *corev1.Secret
+}
+
 func ProvisionFromProvider(reconciler *AppReconciler, provider string, app string, config map[string]string) (map[string]string, map[string]string, error) {
 	ctx := context.Background()
 	providers := hostanv1.ProviderList{}
@@ -337,14 +372,6 @@ func ProvisionFromProvider(reconciler *AppReconciler, provider string, app strin
 	}
 
 	return providerClient.Provision(app, config)
-}
-
-type UseStateObject struct {
-	Reconciler *AppReconciler
-	Use        hostanv1.AppUse
-	App        *hostanv1.App
-	ConfigMap  *corev1.ConfigMap
-	Secret     *corev1.Secret
 }
 
 func (cm *UseStateObject) Changed() bool {
@@ -374,29 +401,8 @@ func (cm *UseStateObject) ToString() string {
 	return fmt.Sprintf("use:%s", UseConfigName(cm.App, cm.Use))
 }
 
-func UseConfigName(app *hostanv1.App, use hostanv1.AppUse) string {
-	return fmt.Sprintf("%s-%s", app.Name, use.Name)
-}
-
-func ServiceName(app *hostanv1.App, service hostanv1.AppService) string {
-	return fmt.Sprintf("%s-%s", app.Name, service.Name)
-}
-
 func (cm *UseStateObject) Create() error {
 	ctx := context.Background()
-	// providers := hostanv1.ProviderList{}
-
-	// if err := cm.Reconciler.List(ctx, &providers); err != nil {
-	// 	return err
-	// }
-
-	// providerClientSet := &ProviderClientSet{providers}
-	// providerClient, err := providerClientSet.Get(cm.Use.Name)
-
-	// if err != nil {
-	// 	return err
-	// }
-
 	configData, secretData, err := ProvisionFromProvider(cm.Reconciler, cm.Use.Name, cm.App.Name, cm.Use.Config)
 
 	if err != nil {
@@ -472,177 +478,108 @@ func (cm *UseStateObject) Update() error {
 
 	return nil
 }
+
 func (cm *UseStateObject) Delete() error { return nil }
 
-func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) ([]plan.Resource, error) {
-	var objects []plan.Resource
+// Ingresses
 
-	ctx := context.Background()
-	labelsSelector := client.MatchingLabels{LabelApp: req.Name}
-	namespace := client.InNamespace(req.Namespace)
-	selectors := []client.ListOption{namespace, labelsSelector}
-
-	configMapList := corev1.ConfigMapList{}
-
-	if err := r.List(ctx, &configMapList, selectors...); err != nil {
-		return nil, err
-	}
-
-	useMap := map[string]*UseStateObject{}
-
-	toMapKey := func(labels map[string]string) string {
-		return fmt.Sprintf("%s::%s", labels[LabelApp], labels[LabelProvider])
-	}
-
-	for _, cm := range configMapList.Items {
-		var appUse hostanv1.AppUse
-		key := toMapKey(cm.Labels)
-		provider := cm.Labels[LabelProvider]
-
-		for _, use := range app.Spec.Uses {
-			if use.Name == provider {
-				appUse = use
-				break
-			}
-		}
-
-		useMap[key] = &UseStateObject{
-			r, appUse, app, &cm, nil,
-		}
-		// objects = append(objects, &ConfigMapStateObject{&cm, app})
-	}
-
-	secretList := corev1.SecretList{}
-
-	if err := r.List(ctx, &secretList, selectors...); err != nil {
-		return nil, err
-	}
-
-	for _, sec := range secretList.Items {
-		var appUse hostanv1.AppUse
-		key := toMapKey(sec.Labels)
-		provider := sec.Labels[LabelProvider]
-
-		for _, use := range app.Spec.Uses {
-			if use.Name == provider {
-				appUse = use
-				break
-			}
-		}
-
-		if _, ok := useMap[key]; ok {
-			useMap[key].Secret = &sec
-		} else {
-			useMap[key] = &UseStateObject{
-				r, appUse, app, nil, &sec,
-			}
-		}
-
-		// objects = append(objects, &SecretStateObject{&cm, app})
-	}
-
-	for _, use := range useMap {
-		objects = append(objects, use)
-	}
-
-	serviceMap := map[string]*ServiceStateObject{}
-
-	deployList := appsv1.DeploymentList{}
-
-	if err := r.List(ctx, &deployList, selectors...); err != nil {
-		return nil, err
-	}
-
-	for _, deploy := range deployList.Items {
-		var appService hostanv1.AppService
-
-		for _, service := range app.Spec.Services {
-			if ServiceName(app, service) == deploy.Name {
-				appService = service
-				break
-			}
-		}
-
-		serviceMap[deploy.Name] = &ServiceStateObject{
-			r, appService, app, &deploy, nil,
-		}
-	}
-
-	for _, service := range serviceMap {
-		objects = append(objects, service)
-	}
-
-	ingressList := netv1.IngressList{}
-
-	if err := r.List(ctx, &ingressList, selectors...); err != nil {
-		return nil, err
-	}
-
-	if len(ingressList.Items) > 0 {
-		objects = append(objects, &IngressStateObject{
-			r, app, &ingressList.Items[0],
-		})
-	}
-
-	return objects, nil
-
-}
-
-type ConfigMapStateObject struct {
+type IngressStateObject struct {
 	Reconciler *AppReconciler
-	ConfigMap  *corev1.ConfigMap
 	App        *hostanv1.App
+	Ingress    *netv1.Ingress
 }
 
-func (cm *ConfigMapStateObject) Changed() bool {
-	var appUse hostanv1.AppUse
+func (is *IngressStateObject) Changed() bool {
+	if is.Ingress != nil {
+		for i, service := range is.App.Spec.Services {
+			if service.Ingress == nil {
+				return true
+			}
 
-	for _, use := range cm.App.Spec.Uses {
-		if use.Name == cm.ConfigMap.ObjectMeta.Labels[LabelProvider] {
-			appUse = use
+			if len(is.Ingress.Spec.Rules) > i {
+				rule := is.Ingress.Spec.Rules[i]
+				if rule.Host != service.Ingress.Host {
+					return true
+				}
+
+				if rule.HTTP.Paths[0].Path != service.Ingress.Path {
+					return true
+				}
+			}
 		}
-	}
-
-	configHash, err := utils.CreateConfigHash(appUse.Config)
-
-	if err != nil {
-		return false
-	}
-
-	if cm.ConfigMap.Annotations[AnnotationConfigHash] != *configHash {
-		return true
 	}
 
 	return false
 }
 
-func (cm *ConfigMapStateObject) ToString() string {
-	return fmt.Sprintf("use:%s", cm.ConfigMap.Name)
+func (is *IngressStateObject) ToString() string {
+	return fmt.Sprintf("ing:%s", is.App.Name)
 }
 
-func (cm *ConfigMapStateObject) Create() error { return nil }
-func (cm *ConfigMapStateObject) Update() error {
+func MakeIngressRules(app *hostanv1.App, services []hostanv1.AppService) []netv1.IngressRule {
+	rules := []netv1.IngressRule{}
+
+	for _, service := range services {
+		if service.Ingress != nil {
+			rules = append(rules, netv1.IngressRule{
+				Host: service.Ingress.Host,
+				IngressRuleValue: netv1.IngressRuleValue{
+					HTTP: &netv1.HTTPIngressRuleValue{
+						Paths: []netv1.HTTPIngressPath{
+							{
+								Path: service.Ingress.Path,
+								Backend: netv1.IngressBackend{
+									ServiceName: ServiceName(app, service),
+									ServicePort: intstr.FromInt(int(service.Port)),
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+	}
+
+	return rules
+}
+
+func (is *IngressStateObject) Create() error {
+	ctx := context.Background()
+	meta := metav1.ObjectMeta{
+		Name:      is.App.Name,
+		Namespace: is.App.Namespace,
+		Labels: map[string]string{
+			LabelApp: is.App.Name,
+		},
+	}
+
+	ingress := netv1.Ingress{
+		ObjectMeta: meta,
+		Spec: netv1.IngressSpec{
+			Rules: MakeIngressRules(is.App, is.App.Spec.Services),
+		},
+	}
+
+	ctrl.SetControllerReference(is.App, &ingress, is.Reconciler.Scheme)
+
+	return is.Reconciler.Create(ctx, &ingress)
+}
+
+func (is *IngressStateObject) Update() error {
+	ctx := context.Background()
+	ingress := is.Ingress
+	ingress.Spec.Rules = MakeIngressRules(is.App, is.App.Spec.Services)
+
+	if err := is.Reconciler.Update(ctx, is.Ingress); err != nil {
+		return err
+	}
+
 	return nil
 }
-
-func (cm *ConfigMapStateObject) Delete() error { return nil }
-
-type SecretStateObject struct {
-	Secret *corev1.Secret
-	App    *hostanv1.App
+func (is *IngressStateObject) Delete() error {
+	ctx := context.Background()
+	return is.Reconciler.Delete(ctx, is.Ingress)
 }
-
-func (cm *SecretStateObject) Changed() bool {
-	return false
-}
-
-func (cm *SecretStateObject) ToString() string {
-	return fmt.Sprintf("use:%s", cm.Secret.Name)
-}
-
-func (cm *SecretStateObject) Create() error { return nil }
-func (cm *SecretStateObject) Update() error { return nil }
-func (cm *SecretStateObject) Delete() error { return nil }
 
 // SetupWithManager sets up the reconciler with a manager
 func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
