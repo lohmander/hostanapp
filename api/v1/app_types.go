@@ -20,12 +20,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // AppServiceIngress represents some basic config for ingresses
 type AppServiceIngress struct {
-	Host string `json:"host"`
+	Host string `json:"host,omitempty"`
 	Path string `json:"path,omitempty"`
 }
 
@@ -41,7 +40,9 @@ type AppService struct {
 	Command []string `json:"command,omitempty"`
 	Port    int32    `json:"port"`
 
-	Ingress *AppServiceIngress `json:"ingress"`
+	// +optional
+	// +nullable
+	Ingress *AppServiceIngress `json:"ingress,omitempty"`
 }
 
 // AppUse defines something `provided` that an app uses

@@ -49,13 +49,12 @@ spec:
                   ingress:
                     description: AppServiceIngress represents some basic config for
                       ingresses
+                    nullable: true
                     properties:
                       host:
                         type: string
                       path:
                         type: string
-                    required:
-                    - host
                     type: object
                   name:
                     maxLength: 20
@@ -66,7 +65,6 @@ spec:
                     type: integer
                 required:
                 - image
-                - ingress
                 - name
                 - port
                 type: object

@@ -206,7 +206,10 @@ func (is *IngressStateObject) Update() error {
 
 	return nil
 }
-func (is *IngressStateObject) Delete() error { return nil }
+func (is *IngressStateObject) Delete() error {
+	ctx := context.Background()
+	return is.Reconciler.Delete(ctx, is.Ingress)
+}
 
 type ServiceStateObject struct {
 	Reconciler *AppReconciler

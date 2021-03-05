@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
 	hostanv1 "github.com/lohmander/hostanapp/api/v1"
@@ -245,6 +246,24 @@ var _ = Describe("App controller", func() {
 
 				return ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0].Path
 			}, timeout, interval).Should(Equal(path))
+		})
+
+		It("Should delete an ingress if its not present in any app service", func() {
+			ctx := context.Background()
+
+			By("First check that it succeeds at getting the ingress")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: app.Name}, &netv1.Ingress{})
+			}, timeout, interval).Should(Succeed())
+
+			app.Spec.Services[0].Ingress = nil
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			By("And then check that it is deleted")
+			Eventually(func() bool {
+				return errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: app.Name}, &netv1.Ingress{}))
+			}, timeout, interval).Should(BeTrue())
 		})
 	})
 })
