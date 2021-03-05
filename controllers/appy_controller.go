@@ -150,8 +150,10 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		return fmt.Sprintf("%s::%s", labels[LabelApp], labels[LabelProvider])
 	}
 
-	for _, cm := range configMapList.Items {
+	for _, x := range configMapList.Items {
 		var appUse hostanv1.AppUse
+
+		cm := x
 		key := toMapKey(cm.Labels)
 		provider := cm.Labels[LabelProvider]
 
@@ -173,8 +175,10 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		return nil, err
 	}
 
-	for _, sec := range secretList.Items {
+	for _, x := range secretList.Items {
 		var appUse hostanv1.AppUse
+
+		sec := x
 		key := toMapKey(sec.Labels)
 		provider := sec.Labels[LabelProvider]
 
@@ -206,18 +210,26 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		return nil, err
 	}
 
-	for _, deploy := range deployList.Items {
-		var appService hostanv1.AppService
+	for _, x := range deployList.Items {
+		var appService *hostanv1.AppService = nil
+
+		// We need to copy the deploy (x) or the pointer (of all service objects) will point
+		// to the last deployment in deployList after the for loop completes
+		deploy := x
 
 		for _, service := range app.Spec.Services {
 			if ServiceName(app, service) == deploy.Name {
-				appService = service
+				appService = &service
 				break
 			}
 		}
 
+		if appService == nil {
+			continue
+		}
+
 		serviceMap[deploy.Name] = &ServiceStateObject{
-			r, appService, app, &deploy, nil,
+			r, *appService, app, &deploy, nil,
 		}
 	}
 
@@ -366,7 +378,11 @@ func (sso *ServiceStateObject) Update() error {
 	return nil
 }
 
-func (sso *ServiceStateObject) Delete() error { return nil }
+func (sso *ServiceStateObject) Delete() error {
+	// ctx := context.Background()
+	return nil
+
+}
 
 func (sso *ServiceStateObject) UseConfigEnvFrom() ([]corev1.EnvFromSource, error) {
 	ctx := context.Background()

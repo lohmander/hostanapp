@@ -19,11 +19,22 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
+func GetAppService(app *hostanv1.App, name string) *hostanv1.AppService {
+	for _, service := range app.Spec.Services {
+		if service.Name == name {
+			return &service
+		}
+	}
+
+	return nil
+}
+
 var _ = Describe("App controller", func() {
 	const (
-		ProviderName   = "echo"
-		AppName        = "test-app"
-		AppServiceName = "test-service"
+		ProviderName    = "echo"
+		AppName         = "test-app"
+		AppServiceName  = "test-service"
+		AppServiceName2 = "another-test-service"
 
 		timeout  = time.Second * 10
 		duration = time.Second * 10
@@ -67,6 +78,11 @@ var _ = Describe("App controller", func() {
 							Host: "example.com",
 							Path: "/",
 						},
+					},
+					{
+						Name:  AppServiceName2,
+						Image: "python",
+						Port:  3000,
 					},
 				},
 				Uses: []hostanv1.AppUse{
@@ -183,13 +199,15 @@ var _ = Describe("App controller", func() {
 		It("Should update a deployment with a new image", func() {
 			ctx := context.Background()
 
+			appService := GetAppService(app, AppServiceName)
+			appService.Image = "node"
 			app.Spec.Services[0].Image = "node"
 
 			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
 
 			Eventually(func() string {
 				deploy := appsv1.Deployment{}
-				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, app.Spec.Services[0])}, &deploy)
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, *appService)}, &deploy)
 
 				if err != nil {
 					return err.Error()
@@ -202,13 +220,15 @@ var _ = Describe("App controller", func() {
 		It("Should update a deployment with a new port", func() {
 			ctx := context.Background()
 
+			appService := &app.Spec.Services[0]
+			appService.Port = 5000
 			app.Spec.Services[0].Port = 5000
 
 			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
 
 			Eventually(func() int32 {
 				deploy := appsv1.Deployment{}
-				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, app.Spec.Services[0])}, &deploy)
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, *appService)}, &deploy)
 
 				if err != nil {
 					return 0
@@ -222,13 +242,15 @@ var _ = Describe("App controller", func() {
 			ctx := context.Background()
 
 			command := []string{"a", "b", "c"}
+			appService := &app.Spec.Services[0]
+			appService.Command = command
 			app.Spec.Services[0].Command = command
 
 			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
 
 			Eventually(func() []string {
 				deploy := appsv1.Deployment{}
-				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, app.Spec.Services[0])}, &deploy)
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, *appService)}, &deploy)
 
 				if err != nil {
 					return []string{err.Error()}
