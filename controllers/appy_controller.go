@@ -37,15 +37,23 @@ import (
 )
 
 const (
-	LabelApp             = "app.hostan.app/app"
-	LabelProvider        = "app.hostan.app/provider"
+	// LabelApp is used for the label placed on each k8s resource for referencing the App object
+	LabelApp = "app.hostan.app/app"
+
+	// LabelProvider is used to make configuration resources queryable by provider
+	LabelProvider = "app.hostan.app/provider"
+
+	// AnnotationConfigHash is used to compare whether or not the underlying configuration for a
+	// given provisioned configuration resource has changed since it was provisioned
 	AnnotationConfigHash = "app.hostan.app/config-hash"
 )
 
+// UseConfigName constructs the name string for a use config (ConfigMap & Secret)
 func UseConfigName(app *hostanv1.App, use hostanv1.AppUse) string {
 	return fmt.Sprintf("%s-%s", app.Name, use.Name)
 }
 
+// ServiceName constructs the name string for a service (Deployment & Service)
 func ServiceName(app *hostanv1.App, service hostanv1.AppService) string {
 	return fmt.Sprintf("%s-%s", app.Name, service.Name)
 }
