@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
+	"github.com/iancoleman/strcase"
 	"github.com/lohmander/hostanapp/plan"
 	"github.com/lohmander/hostanapp/utils"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -285,6 +286,12 @@ func (sso *ServiceStateObject) Create() error {
 		Labels:    labels,
 	}
 
+	envFroms, err := sso.UseConfigEnvFrom()
+
+	if err != nil {
+		return err
+	}
+
 	var replicas int32 = 1
 
 	deploy := appsv1.Deployment{
@@ -301,7 +308,7 @@ func (sso *ServiceStateObject) Create() error {
 						Name:    sso.AppService.Name,
 						Image:   sso.AppService.Image,
 						Ports:   []corev1.ContainerPort{{ContainerPort: sso.AppService.Port}},
-						EnvFrom: []corev1.EnvFromSource{},
+						EnvFrom: envFroms,
 						Env: []corev1.EnvVar{{
 							Name:  "HOSTANAPP_TICK",
 							Value: "1",
@@ -314,7 +321,7 @@ func (sso *ServiceStateObject) Create() error {
 
 	ctrl.SetControllerReference(sso.App, &deploy, sso.Reconciler.Scheme)
 
-	err := sso.Reconciler.Create(ctx, &deploy)
+	err = sso.Reconciler.Create(ctx, &deploy)
 
 	if err != nil {
 		return err
@@ -339,11 +346,18 @@ func (sso *ServiceStateObject) Create() error {
 }
 
 func (sso *ServiceStateObject) Update() error {
+	envFroms, err := sso.UseConfigEnvFrom()
+
+	if err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 	container := &sso.Deployment.Spec.Template.Spec.Containers[0]
 	container.Image = sso.AppService.Image
 	container.Command = sso.AppService.Command
 	container.Ports[0].ContainerPort = sso.AppService.Port
+	container.EnvFrom = envFroms
 
 	if err := sso.Reconciler.Update(ctx, sso.Deployment); err != nil {
 		return err
@@ -353,6 +367,56 @@ func (sso *ServiceStateObject) Update() error {
 }
 
 func (sso *ServiceStateObject) Delete() error { return nil }
+
+func (sso *ServiceStateObject) UseConfigEnvFrom() ([]corev1.EnvFromSource, error) {
+	ctx := context.Background()
+	labelsSelector := client.MatchingLabels{LabelApp: sso.App.Name}
+	namespace := client.InNamespace(sso.App.Namespace)
+	selectors := []client.ListOption{namespace, labelsSelector}
+
+	configMapList := corev1.ConfigMapList{}
+
+	if err := sso.Reconciler.List(ctx, &configMapList, selectors...); err != nil {
+		return nil, err
+	}
+
+	secretList := corev1.SecretList{}
+
+	if err := sso.Reconciler.List(ctx, &secretList, selectors...); err != nil {
+		return nil, err
+	}
+
+	envFroms := []corev1.EnvFromSource{}
+
+	for _, configMap := range configMapList.Items {
+		envFroms = append(envFroms, corev1.EnvFromSource{
+			Prefix: ConfigPrefix(configMap.Labels[LabelProvider]),
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMap.Name,
+				},
+			},
+		})
+	}
+
+	for _, secret := range secretList.Items {
+		envFroms = append(envFroms, corev1.EnvFromSource{
+			Prefix: ConfigPrefix(secret.Labels[LabelProvider]),
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: secret.Name,
+				},
+			},
+		})
+	}
+
+	return envFroms, nil
+}
+
+func ConfigPrefix(provider string) string {
+
+	return fmt.Sprintf("%s_", strcase.ToScreamingSnake(provider))
+}
 
 // Uses
 

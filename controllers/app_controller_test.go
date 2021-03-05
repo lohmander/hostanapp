@@ -111,6 +111,36 @@ var _ = Describe("App controller", func() {
 			}, timeout, interval).Should(Succeed())
 		})
 
+		It("Should set envFrom in deployments to provisioned config", func() {
+			ctx := context.Background()
+			configName := UseConfigName(app, app.Spec.Uses[0])
+
+			Eventually(func() string {
+				deploy := appsv1.Deployment{}
+
+				if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, app.Spec.Services[0])}, &deploy); err != nil {
+					return err.Error()
+				}
+
+				return deploy.Spec.Template.Spec.Containers[0].EnvFrom[0].ConfigMapRef.Name
+			}, timeout, interval).Should(Equal(configName))
+		})
+
+		It("Should set envFrom in deployments to provisioned secret", func() {
+			ctx := context.Background()
+			configName := UseConfigName(app, app.Spec.Uses[0])
+
+			Eventually(func() string {
+				deploy := appsv1.Deployment{}
+
+				if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, app.Spec.Services[0])}, &deploy); err != nil {
+					return err.Error()
+				}
+
+				return deploy.Spec.Template.Spec.Containers[0].EnvFrom[1].SecretRef.Name
+			}, timeout, interval).Should(Equal(configName))
+		})
+
 		It("Should create kubernetes services", func() {
 			ctx := context.Background()
 
