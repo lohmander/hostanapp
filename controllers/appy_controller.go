@@ -78,7 +78,7 @@ func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	p, err := plan.Make(current, desired)
 
-	fmt.Println("Will execute plan:")
+	fmt.Println("\nWill execute plan:")
 	fmt.Println(p.Describe())
 
 	if err := p.Execute(); err != nil {
@@ -100,7 +100,7 @@ func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) (
 	hasIngress := false
 
 	for _, service := range app.Spec.Services {
-		objects = append(objects, &ServiceStateObject{r, service, app})
+		objects = append(objects, &ServiceStateObject{r, service, app, nil, nil})
 
 		if service.Ingress != nil {
 			hasIngress = true
@@ -108,7 +108,7 @@ func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) (
 	}
 
 	if hasIngress {
-		objects = append(objects, &IngressStateObject{r, app})
+		objects = append(objects, &IngressStateObject{r, app, nil})
 	}
 
 	return objects, nil
@@ -117,14 +117,61 @@ func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) (
 type IngressStateObject struct {
 	Reconciler *AppReconciler
 	App        *hostanv1.App
+	Ingress    *netv1.Ingress
 }
 
 func (is *IngressStateObject) Changed() bool {
+	if is.Ingress != nil {
+		for i, service := range is.App.Spec.Services {
+			if service.Ingress == nil {
+				return true
+			}
+
+			if len(is.Ingress.Spec.Rules) > i {
+				rule := is.Ingress.Spec.Rules[i]
+				if rule.Host != service.Ingress.Host {
+					return true
+				}
+
+				if rule.HTTP.Paths[0].Path != service.Ingress.Path {
+					return true
+				}
+			}
+		}
+	}
+
 	return false
 }
 
 func (is *IngressStateObject) ToString() string {
 	return fmt.Sprintf("ing:%s", is.App.Name)
+}
+
+func MakeIngressRules(app *hostanv1.App, services []hostanv1.AppService) []netv1.IngressRule {
+	rules := []netv1.IngressRule{}
+
+	for _, service := range services {
+		if service.Ingress != nil {
+			rules = append(rules, netv1.IngressRule{
+				Host: service.Ingress.Host,
+				IngressRuleValue: netv1.IngressRuleValue{
+					HTTP: &netv1.HTTPIngressRuleValue{
+						Paths: []netv1.HTTPIngressPath{
+							{
+								Path: service.Ingress.Path,
+								Backend: netv1.IngressBackend{
+									ServiceName: ServiceName(app, service),
+									ServicePort: intstr.FromInt(int(service.Port)),
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+	}
+
+	return rules
 }
 
 func (is *IngressStateObject) Create() error {
@@ -137,33 +184,10 @@ func (is *IngressStateObject) Create() error {
 		},
 	}
 
-	rules := []netv1.IngressRule{}
-
-	for _, service := range is.App.Spec.Services {
-		if service.Ingress != nil {
-			rules = append(rules, netv1.IngressRule{
-				Host: service.Ingress.Host,
-				IngressRuleValue: netv1.IngressRuleValue{
-					HTTP: &netv1.HTTPIngressRuleValue{
-						Paths: []netv1.HTTPIngressPath{
-							{
-								Path: service.Ingress.Path,
-								Backend: netv1.IngressBackend{
-									ServiceName: ServiceName(is.App, service),
-									ServicePort: intstr.FromInt(int(service.Port)),
-								},
-							},
-						},
-					},
-				},
-			})
-		}
-	}
-
 	ingress := netv1.Ingress{
 		ObjectMeta: meta,
 		Spec: netv1.IngressSpec{
-			Rules: rules,
+			Rules: MakeIngressRules(is.App, is.App.Spec.Services),
 		},
 	}
 
@@ -172,21 +196,47 @@ func (is *IngressStateObject) Create() error {
 	return is.Reconciler.Create(ctx, &ingress)
 }
 
-func (is *IngressStateObject) Update() error { return nil }
+func (is *IngressStateObject) Update() error {
+	ctx := context.Background()
+	ingress := is.Ingress
+	ingress.Spec.Rules = MakeIngressRules(is.App, is.App.Spec.Services)
+
+	if err := is.Reconciler.Update(ctx, is.Ingress); err != nil {
+		return err
+	}
+
+	return nil
+}
 func (is *IngressStateObject) Delete() error { return nil }
 
 type ServiceStateObject struct {
 	Reconciler *AppReconciler
-	Service    hostanv1.AppService
+	AppService hostanv1.AppService
 	App        *hostanv1.App
+	Deployment *appsv1.Deployment
+	Service    *corev1.Service
 }
 
 func (sso *ServiceStateObject) Changed() bool {
+	if deploy := sso.Deployment; deploy != nil {
+		if deploy.Spec.Template.Spec.Containers[0].Image != sso.AppService.Image {
+			return true
+		}
+
+		if deploy.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort != sso.AppService.Port {
+			return true
+		}
+
+		if !utils.StringSliceEquals(deploy.Spec.Template.Spec.Containers[0].Command, sso.AppService.Command) {
+			return true
+		}
+	}
+
 	return false
 }
 
 func (sso *ServiceStateObject) ToString() string {
-	return fmt.Sprintf("svc:%s", ServiceName(sso.App, sso.Service))
+	return fmt.Sprintf("svc:%s", ServiceName(sso.App, sso.AppService))
 }
 
 func (sso *ServiceStateObject) Create() error {
@@ -195,7 +245,7 @@ func (sso *ServiceStateObject) Create() error {
 		LabelApp: sso.App.Name,
 	}
 	meta := metav1.ObjectMeta{
-		Name:      ServiceName(sso.App, sso.Service),
+		Name:      ServiceName(sso.App, sso.AppService),
 		Namespace: sso.App.Namespace,
 		Labels:    labels,
 	}
@@ -213,9 +263,9 @@ func (sso *ServiceStateObject) Create() error {
 				ObjectMeta: meta,
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Name:    sso.Service.Name,
-						Image:   sso.Service.Image,
-						Ports:   []corev1.ContainerPort{{ContainerPort: sso.Service.Port}},
+						Name:    sso.AppService.Name,
+						Image:   sso.AppService.Image,
+						Ports:   []corev1.ContainerPort{{ContainerPort: sso.AppService.Port}},
 						EnvFrom: []corev1.EnvFromSource{},
 						Env: []corev1.EnvVar{{
 							Name:  "HOSTANAPP_TICK",
@@ -241,17 +291,32 @@ func (sso *ServiceStateObject) Create() error {
 			Ports: []corev1.ServicePort{{
 				Name:       meta.Name,
 				Protocol:   "TCP",
-				Port:       sso.Service.Port,
-				TargetPort: intstr.FromInt(int(sso.Service.Port)),
+				Port:       sso.AppService.Port,
+				TargetPort: intstr.FromInt(int(sso.AppService.Port)),
 			}},
 			Selector: labels,
 		},
 	}
 
+	ctrl.SetControllerReference(sso.App, &service, sso.Reconciler.Scheme)
+
 	return sso.Reconciler.Create(ctx, &service)
 }
 
-func (sso *ServiceStateObject) Update() error { return nil }
+func (sso *ServiceStateObject) Update() error {
+	ctx := context.Background()
+	container := &sso.Deployment.Spec.Template.Spec.Containers[0]
+	container.Image = sso.AppService.Image
+	container.Command = sso.AppService.Command
+	container.Ports[0].ContainerPort = sso.AppService.Port
+
+	if err := sso.Reconciler.Update(ctx, sso.Deployment); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (sso *ServiceStateObject) Delete() error { return nil }
 
 func ProvisionFromProvider(reconciler *AppReconciler, provider string, app string, config map[string]string) (map[string]string, map[string]string, error) {
@@ -284,6 +349,7 @@ func (cm *UseStateObject) Changed() bool {
 	configHash, err := utils.CreateConfigHash(cm.Use.Config)
 
 	if err != nil {
+		cm.Reconciler.Log.Error(err, "Failed to create config hash")
 		return false
 	}
 
@@ -335,12 +401,21 @@ func (cm *UseStateObject) Create() error {
 		return err
 	}
 
+	configHash, err := utils.CreateConfigHash(cm.Use.Config)
+
+	if err != nil {
+		return err
+	}
+
 	meta := metav1.ObjectMeta{
 		Name:      UseConfigName(cm.App, cm.Use),
 		Namespace: cm.App.Namespace,
 		Labels: map[string]string{
 			LabelApp:      cm.App.Name,
 			LabelProvider: cm.Use.Name,
+		},
+		Annotations: map[string]string{
+			AnnotationConfigHash: *configHash,
 		},
 	}
 	configMap := corev1.ConfigMap{
@@ -425,6 +500,7 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		for _, use := range app.Spec.Uses {
 			if use.Name == provider {
 				appUse = use
+				break
 			}
 		}
 
@@ -448,6 +524,7 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		for _, use := range app.Spec.Uses {
 			if use.Name == provider {
 				appUse = use
+				break
 			}
 		}
 
@@ -464,6 +541,45 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 
 	for _, use := range useMap {
 		objects = append(objects, use)
+	}
+
+	serviceMap := map[string]*ServiceStateObject{}
+
+	deployList := appsv1.DeploymentList{}
+
+	if err := r.List(ctx, &deployList, selectors...); err != nil {
+		return nil, err
+	}
+
+	for _, deploy := range deployList.Items {
+		var appService hostanv1.AppService
+
+		for _, service := range app.Spec.Services {
+			if ServiceName(app, service) == deploy.Name {
+				appService = service
+				break
+			}
+		}
+
+		serviceMap[deploy.Name] = &ServiceStateObject{
+			r, appService, app, &deploy, nil,
+		}
+	}
+
+	for _, service := range serviceMap {
+		objects = append(objects, service)
+	}
+
+	ingressList := netv1.IngressList{}
+
+	if err := r.List(ctx, &ingressList, selectors...); err != nil {
+		return nil, err
+	}
+
+	if len(ingressList.Items) > 0 {
+		objects = append(objects, &IngressStateObject{
+			r, app, &ingressList.Items[0],
+		})
 	}
 
 	return objects, nil

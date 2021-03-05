@@ -79,7 +79,7 @@ func (p *Plan) Describe() string {
 	}
 
 	for _, step := range p.Steps {
-		steps = append(steps, fmt.Sprintf("%s: %s – %s", actions[step.Action], step.Object.ToString(), step.Reason))
+		steps = append(steps, fmt.Sprintf("%s: %s\t\t– %s", actions[step.Action], step.Object.ToString(), step.Reason))
 	}
 
 	return fmt.Sprintf("\n%s\n", strings.Join(steps, "\n"))

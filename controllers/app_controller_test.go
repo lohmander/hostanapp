@@ -64,6 +64,7 @@ var _ = Describe("App controller", func() {
 						Port:  80,
 						Ingress: &hostanv1.AppServiceIngress{
 							Host: "example.com",
+							Path: "/",
 						},
 					},
 				},
@@ -134,17 +135,116 @@ var _ = Describe("App controller", func() {
 				"HELLO": "TEST",
 			}
 
-			k8sClient.Update(ctx, app)
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
 
 			Eventually(func() string {
 				configMap := corev1.ConfigMap{}
 				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, app.Spec.Uses[0])}, &configMap)
 
 				if err != nil {
-					return ""
+					return err.Error()
 				}
+
 				return configMap.Data["HELLO"]
 			}, timeout, interval).Should(Equal("TEST"))
+		})
+
+		It("Should update a deployment with a new image", func() {
+			ctx := context.Background()
+
+			app.Spec.Services[0].Image = "node"
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			Eventually(func() string {
+				deploy := appsv1.Deployment{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, app.Spec.Services[0])}, &deploy)
+
+				if err != nil {
+					return err.Error()
+				}
+
+				return deploy.Spec.Template.Spec.Containers[0].Image
+			}, timeout, interval).Should(Equal("node"))
+		})
+
+		It("Should update a deployment with a new port", func() {
+			ctx := context.Background()
+
+			app.Spec.Services[0].Port = 5000
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			Eventually(func() int32 {
+				deploy := appsv1.Deployment{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, app.Spec.Services[0])}, &deploy)
+
+				if err != nil {
+					return 0
+				}
+
+				return deploy.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort
+			}, timeout, interval).Should(Equal(int32(5000)))
+		})
+
+		It("Should update a deployment with a command", func() {
+			ctx := context.Background()
+
+			command := []string{"a", "b", "c"}
+			app.Spec.Services[0].Command = command
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			Eventually(func() []string {
+				deploy := appsv1.Deployment{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, app.Spec.Services[0])}, &deploy)
+
+				if err != nil {
+					return []string{err.Error()}
+				}
+
+				return deploy.Spec.Template.Spec.Containers[0].Command
+			}, timeout, interval).Should(BeEquivalentTo(command))
+		})
+
+		It("Should update an ingress with a host", func() {
+			ctx := context.Background()
+
+			host := "example2.com"
+			app.Spec.Services[0].Ingress.Host = host
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			Eventually(func() string {
+				ingress := netv1.Ingress{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: app.Name}, &ingress)
+
+				if err != nil {
+					return err.Error()
+				}
+
+				return ingress.Spec.Rules[0].Host
+			}, timeout, interval).Should(Equal(host))
+		})
+
+		It("Should update an ingress with a path", func() {
+			ctx := context.Background()
+
+			path := "/test"
+			app.Spec.Services[0].Ingress.Path = path
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			Eventually(func() string {
+				ingress := netv1.Ingress{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: app.Name}, &ingress)
+
+				if err != nil {
+					return err.Error()
+				}
+
+				return ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0].Path
+			}, timeout, interval).Should(Equal(path))
 		})
 	})
 })
