@@ -14,7 +14,10 @@ word that translates to "the cough."
 - [x] Implement CRD and controller for the App resource
 - [x] Implement CRD and controller for the Provider resource
 - [x] Create spec/protobuf file for the provider interface
-- [ ] Create config maps and secrets for config upon reconciliation
+- [x] Create config maps and secrets for config upon reconciliation
+- [ ] Add validation hooks for providers
+- [ ] Write a provider for PostgreSQL
+- [ ] Write a provider for redis
 
 ### What it looks like (WIP)
 

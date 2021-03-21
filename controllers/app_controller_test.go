@@ -338,5 +338,44 @@ var _ = Describe("App controller", func() {
 			}, timeout, interval).ShouldNot(Succeed())
 			// }, timeout, interval).Should(BeTrue())
 		})
+
+		It("Should delete an app use secret if the use is no longer used", func() {
+			ctx := context.Background()
+
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, app.Spec.Uses[0])}, &corev1.Secret{})
+			}, timeout, interval).Should(Succeed())
+
+			use := app.Spec.Uses[0]
+			app.Spec.Uses = []hostanv1.AppUse{}
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			By("And then check that it is deleted")
+			Eventually(func() bool {
+				// return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, use)}, &corev1.Secret{})
+				// return errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, appService)}, &appsv1.Deployment{}))
+				return errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, use)}, &corev1.Secret{}))
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("Should delete an app use configmap if the use is no longer used", func() {
+			ctx := context.Background()
+
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, app.Spec.Uses[0])}, &corev1.ConfigMap{})
+			}, timeout, interval).Should(Succeed())
+
+			use := app.Spec.Uses[0]
+			app.Spec.Uses = []hostanv1.AppUse{}
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			By("And then check that it is deleted")
+			Eventually(func() bool {
+				// return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, use)}, &corev1.ConfigMap{})
+				return errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, use)}, &corev1.ConfigMap{}))
+			}, timeout, interval).Should(BeTrue())
+		})
 	})
 })

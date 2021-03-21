@@ -583,7 +583,21 @@ func (cm *UseStateObject) Update() error {
 	return nil
 }
 
-func (cm *UseStateObject) Delete() error { return nil }
+func (cm *UseStateObject) Delete() error {
+	ctx := context.Background()
+
+	if cm.Secret != nil {
+		if err := cm.Reconciler.Delete(ctx, cm.Secret); err != nil {
+			return err
+		}
+	}
+
+	if cm.ConfigMap != nil {
+		return cm.Reconciler.Delete(ctx, cm.ConfigMap)
+	}
+
+	return nil
+}
 
 // Ingresses
 
