@@ -408,4 +408,9 @@ var _ = Describe("App controller", func() {
 			Expect(sso.Changed()).To(BeTrue())
 		})
 	})
+
+	Context("Delete an app", func() {
+		// Apparently the reconciliation loop for orphaned resources does not run in the
+		// test environment (which isn't a real k8s cluster), se we'll skip this one for now
+	})
 })
