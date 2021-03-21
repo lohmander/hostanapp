@@ -45,6 +45,17 @@ type AppService struct {
 	Ingress *AppServiceIngress `json:"ingress,omitempty"`
 }
 
+// AppCronJob defines a service that constitutes part of an app
+type AppCronJob struct {
+	// +kubebuilder:validation:MaxLength=20
+	// +kubebuilder:validation:MinLength=3
+	Name string `json:"name"`
+	// +kubebuilder:validation:MinLength=1
+	Image    string   `json:"image"`
+	Command  []string `json:"command,omitempty"`
+	Schedule string   `json:"schedule"`
+}
+
 // AppUse defines something `provided` that an app uses
 type AppUse struct {
 	// +kubebuilder:validation:MaxLength=20
@@ -62,6 +73,7 @@ type AppSpec struct {
 
 	// +kubebuilder:validation:MinItems=1
 	Services []AppService `json:"services"`
+	CronJobs []AppCronJob `json:"cronjobs"`
 
 	Uses []AppUse `json:"uses,omitempty"`
 }

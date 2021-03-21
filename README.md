@@ -44,7 +44,7 @@ spec:
     - name: backup
       image: lohmander/webapp-image:latest
       command: ["python", "manage.py", "dbbackup"]
-      schedule: "* 1 * * *"
+      schedule: "0 0 * * *"
   uses:
     - name: postgresql
     - name: redis
