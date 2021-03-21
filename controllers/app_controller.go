@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1beta "k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -58,6 +59,11 @@ func UseConfigName(app *hostanv1.App, use hostanv1.AppUse) string {
 // ServiceName constructs the name string for a service (Deployment & Service)
 func ServiceName(app *hostanv1.App, service hostanv1.AppService) string {
 	return fmt.Sprintf("%s-%s", app.Name, service.Name)
+}
+
+// CronJobName constructs the name string for a cronjob
+func CronJobName(app *hostanv1.App, cj hostanv1.AppCronJob) string {
+	return fmt.Sprintf("%s-%s", app.Name, cj.Name)
 }
 
 // AppReconciler reconciles a App object
@@ -487,6 +493,35 @@ func (sso *ServiceStateObject) UseConfigEnvFrom() ([]corev1.EnvFromSource, error
 func ConfigPrefix(provider string) string {
 
 	return fmt.Sprintf("%s_", strcase.ToScreamingSnake(provider))
+}
+
+// CronJobs
+
+type CronJobStateObject struct {
+	Reconciler *AppReconciler
+	App        *hostanv1.App
+	AppCronJob hostanv1.AppCronJob
+	CronJob    *batchv1beta.CronJob
+}
+
+func (cjso *CronJobStateObject) Changed() bool {
+	return false
+}
+
+func (cjso *CronJobStateObject) ToString() string {
+	return fmt.Sprintf("use:%s", CronJobName(cjso.App, cjso.AppCronJob))
+}
+
+func (cjso *CronJobStateObject) Create() error {
+	return nil
+}
+
+func (cjso *CronJobStateObject) Update() error {
+	return nil
+}
+
+func (cjso *CronJobStateObject) Delete() error {
+	return nil
 }
 
 // Uses
