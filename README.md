@@ -15,6 +15,8 @@ word that translates to "the cough."
 - [x] Implement CRD and controller for the Provider resource
 - [x] Create spec/protobuf file for the provider interface
 - [x] Create config maps and secrets for config upon reconciliation
+- [ ] Add support for cronjobs
+- [ ] Add support for explicit environment variable definitions
 - [ ] Add validation hooks for providers
 - [ ] Write a provider for PostgreSQL
 - [ ] Write a provider for redis
@@ -22,7 +24,7 @@ word that translates to "the cough."
 ### What it looks like (WIP)
 
 ```yaml
-apiVersion: hostan.hostan.app/v1alpha1
+apiVersion: hostan.hostan.app/v1
 kind: App
 metadata:
   name: my-app
@@ -31,8 +33,18 @@ spec:
     - name: webapp
       image: lohmander/webapp-image:latest
       port: 80
+      env:
+        - fromConfigMap: my-cm
+        - fromSecret: my-secret
+        - name: SOME_VAR
+          value: some value
       ingress:
         host: myapp.hostan.app
+  cronjobs:
+    - name: backup
+      image: lohmander/webapp-image:latest
+      command: ["python", "manage.py", "dbbackup"]
+      schedule: "* 1 * * *"
   uses:
     - name: postgresql
     - name: redis
