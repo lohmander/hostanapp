@@ -507,7 +507,7 @@ func ProvisionFromProvider(reconciler *AppReconciler, provider string, app strin
 		return nil, nil, err
 	}
 
-	providerClientSet := &utils.ProviderClientSet{providers}
+	providerClientSet := &utils.ProviderClientSet{ProviderList: providers}
 	providerClient, err := providerClientSet.Get(provider)
 
 	if err != nil {
