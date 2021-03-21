@@ -363,9 +363,9 @@ func (sso *ServiceStateObject) Create() error {
 						Ports:   []corev1.ContainerPort{{ContainerPort: sso.AppService.Port}},
 						EnvFrom: envFroms,
 						Env: []corev1.EnvVar{{
-							Name: "HOSTANAPP_TICK",
-							// TODO: implement a real tick
-							Value: "1",
+							Name: "HOSTANAPP_APP_VERSION",
+							// TOOD: find a more elegant solution that doesn't restart on every app update
+							Value: sso.App.ResourceVersion,
 						}},
 					}},
 				},
