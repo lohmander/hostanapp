@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta "k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1beta1"
@@ -123,7 +124,7 @@ func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) (
 	hasIngress := false
 
 	for _, service := range app.Spec.Services {
-		objects = append(objects, &ServiceStateObject{r, service, app, nil, nil, nil, nil})
+		objects = append(objects, &ServiceStateObject{ConfigEnvStateObject{r, app}, r, service, app, nil, nil, nil, nil})
 
 		if service.Ingress != nil {
 			hasIngress = true
@@ -132,6 +133,10 @@ func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) (
 
 	if hasIngress {
 		objects = append(objects, &IngressStateObject{r, app, nil})
+	}
+
+	for _, cronjob := range app.Spec.CronJobs {
+		objects = append(objects, &CronJobStateObject{ConfigEnvStateObject{r, app}, r, app, cronjob, nil})
 	}
 
 	return objects, nil
@@ -238,6 +243,7 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		}
 
 		serviceMap[deploy.Name] = &ServiceStateObject{
+			ConfigEnvStateObject{r, app},
 			r, *appService, app, &deploy, nil, configMapList.Items, secretList.Items,
 		}
 	}
@@ -259,8 +265,87 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		})
 	}
 
-	return objects, nil
+	cronJobList := batchv1beta.CronJobList{}
 
+	if err := r.List(ctx, &cronJobList, selectors...); err != nil {
+		return nil, err
+	}
+
+	for _, x := range cronJobList.Items {
+		var appCronJob hostanv1.AppCronJob
+
+		for _, cronJob := range app.Spec.CronJobs {
+			if CronJobName(app, cronJob) == x.Name {
+				appCronJob = cronJob
+				break
+			}
+		}
+
+		cronJob := x
+
+		objects = append(objects, &CronJobStateObject{
+			ConfigEnvStateObject{r, app},
+			r, app, appCronJob, &cronJob,
+		})
+	}
+
+	return objects, nil
+}
+
+// Other abstractions
+
+type ConfigEnvStateObject struct {
+	Reconciler *AppReconciler
+	App        *hostanv1.App
+}
+
+func (sso *ConfigEnvStateObject) UseConfigEnvFrom() ([]corev1.EnvFromSource, error) {
+	ctx := context.Background()
+	labelsSelector := client.MatchingLabels{LabelApp: sso.App.Name}
+	namespace := client.InNamespace(sso.App.Namespace)
+	selectors := []client.ListOption{namespace, labelsSelector}
+
+	configMapList := corev1.ConfigMapList{}
+
+	if err := sso.Reconciler.List(ctx, &configMapList, selectors...); err != nil {
+		return nil, err
+	}
+
+	secretList := corev1.SecretList{}
+
+	if err := sso.Reconciler.List(ctx, &secretList, selectors...); err != nil {
+		return nil, err
+	}
+
+	envFroms := []corev1.EnvFromSource{}
+
+	for _, configMap := range configMapList.Items {
+		envFroms = append(envFroms, corev1.EnvFromSource{
+			Prefix: ConfigPrefix(configMap.Labels[LabelProvider]),
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMap.Name,
+				},
+			},
+		})
+	}
+
+	for _, secret := range secretList.Items {
+		envFroms = append(envFroms, corev1.EnvFromSource{
+			Prefix: ConfigPrefix(secret.Labels[LabelProvider]),
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: secret.Name,
+				},
+			},
+		})
+	}
+
+	return envFroms, nil
+}
+
+func ConfigPrefix(provider string) string {
+	return fmt.Sprintf("%s_", strcase.ToScreamingSnake(provider))
 }
 
 // Resource implementations
@@ -268,6 +353,7 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 // Services
 
 type ServiceStateObject struct {
+	ConfigEnvStateObject
 	Reconciler *AppReconciler
 	AppService hostanv1.AppService
 	App        *hostanv1.App
@@ -445,59 +531,10 @@ func (sso *ServiceStateObject) Delete() error {
 
 }
 
-func (sso *ServiceStateObject) UseConfigEnvFrom() ([]corev1.EnvFromSource, error) {
-	ctx := context.Background()
-	labelsSelector := client.MatchingLabels{LabelApp: sso.App.Name}
-	namespace := client.InNamespace(sso.App.Namespace)
-	selectors := []client.ListOption{namespace, labelsSelector}
-
-	configMapList := corev1.ConfigMapList{}
-
-	if err := sso.Reconciler.List(ctx, &configMapList, selectors...); err != nil {
-		return nil, err
-	}
-
-	secretList := corev1.SecretList{}
-
-	if err := sso.Reconciler.List(ctx, &secretList, selectors...); err != nil {
-		return nil, err
-	}
-
-	envFroms := []corev1.EnvFromSource{}
-
-	for _, configMap := range configMapList.Items {
-		envFroms = append(envFroms, corev1.EnvFromSource{
-			Prefix: ConfigPrefix(configMap.Labels[LabelProvider]),
-			ConfigMapRef: &corev1.ConfigMapEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: configMap.Name,
-				},
-			},
-		})
-	}
-
-	for _, secret := range secretList.Items {
-		envFroms = append(envFroms, corev1.EnvFromSource{
-			Prefix: ConfigPrefix(secret.Labels[LabelProvider]),
-			SecretRef: &corev1.SecretEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: secret.Name,
-				},
-			},
-		})
-	}
-
-	return envFroms, nil
-}
-
-func ConfigPrefix(provider string) string {
-
-	return fmt.Sprintf("%s_", strcase.ToScreamingSnake(provider))
-}
-
 // CronJobs
 
 type CronJobStateObject struct {
+	ConfigEnvStateObject
 	Reconciler *AppReconciler
 	App        *hostanv1.App
 	AppCronJob hostanv1.AppCronJob
@@ -525,11 +562,51 @@ func (cjso *CronJobStateObject) Changed() bool {
 }
 
 func (cjso *CronJobStateObject) ToString() string {
-	return fmt.Sprintf("use:%s", CronJobName(cjso.App, cjso.AppCronJob))
+	return fmt.Sprintf("cron:%s", CronJobName(cjso.App, cjso.AppCronJob))
 }
 
 func (cjso *CronJobStateObject) Create() error {
-	return nil
+	ctx := context.Background()
+	labels := map[string]string{
+		LabelApp: cjso.App.Name,
+	}
+	meta := metav1.ObjectMeta{
+		Name:      CronJobName(cjso.App, cjso.AppCronJob),
+		Namespace: cjso.App.Namespace,
+		Labels:    labels,
+	}
+	envFroms, err := cjso.UseConfigEnvFrom()
+
+	if err != nil {
+		return err
+	}
+
+	cronJob := batchv1beta.CronJob{
+		ObjectMeta: meta,
+		Spec: batchv1beta.CronJobSpec{
+			Schedule: cjso.AppCronJob.Schedule,
+			JobTemplate: batchv1beta.JobTemplateSpec{
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: meta,
+						Spec: corev1.PodSpec{
+							RestartPolicy: corev1.RestartPolicyOnFailure,
+							Containers: []corev1.Container{{
+								Name:    cjso.AppCronJob.Name,
+								Image:   cjso.AppCronJob.Image,
+								Command: cjso.AppCronJob.Command,
+								EnvFrom: envFroms,
+							}},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ctrl.SetControllerReference(cjso.App, &cronJob, cjso.Reconciler.Scheme)
+
+	return cjso.Reconciler.Create(ctx, &cronJob)
 }
 
 func (cjso *CronJobStateObject) Update() error {

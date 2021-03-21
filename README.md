@@ -18,6 +18,7 @@ word that translates to "the cough."
 - [ ] Add support for cronjobs
 - [ ] Add support for explicit environment variable definitions
 - [ ] Add validation hooks for providers
+- [ ] Implement proper statuses
 - [ ] Write a provider for PostgreSQL
 - [ ] Write a provider for redis
 

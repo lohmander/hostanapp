@@ -13,6 +13,7 @@ import (
 
 	hostanv1 "github.com/lohmander/hostanapp/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1beta "k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,6 +36,7 @@ var _ = Describe("App controller", func() {
 		AppName         = "test-app"
 		AppServiceName  = "test-service"
 		AppServiceName2 = "another-test-service"
+		AppCronJobName  = "test-job"
 
 		timeout  = time.Second * 10
 		duration = time.Second * 10
@@ -83,6 +85,14 @@ var _ = Describe("App controller", func() {
 						Name:  AppServiceName2,
 						Image: "python",
 						Port:  3000,
+					},
+				},
+				CronJobs: []hostanv1.AppCronJob{
+					{
+						Name:     AppCronJobName,
+						Image:    "alpine",
+						Command:  []string{"echo", "'1'"},
+						Schedule: "*/1 * * * *",
 					},
 				},
 				Uses: []hostanv1.AppUse{
@@ -170,6 +180,14 @@ var _ = Describe("App controller", func() {
 
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: app.Name}, &netv1.Ingress{})
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("Should create a kubernetes cronjob", func() {
+			ctx := context.Background()
+
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: CronJobName(app, app.Spec.CronJobs[0])}, &batchv1beta.CronJob{})
 			}, timeout, interval).Should(Succeed())
 		})
 	})
@@ -403,7 +421,7 @@ var _ = Describe("App controller", func() {
 
 			app.Spec.Uses[0].Config = map[string]string{"Changed": "Value"}
 
-			sso := ServiceStateObject{nil, appService, app, &deploy, nil, []corev1.ConfigMap{configMap}, []corev1.Secret{secret}}
+			sso := ServiceStateObject{ConfigEnvStateObject{nil, app}, nil, appService, app, &deploy, nil, []corev1.ConfigMap{configMap}, []corev1.Secret{secret}}
 
 			Expect(sso.Changed()).To(BeTrue())
 		})
