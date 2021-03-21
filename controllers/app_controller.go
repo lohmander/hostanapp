@@ -505,6 +505,22 @@ type CronJobStateObject struct {
 }
 
 func (cjso *CronJobStateObject) Changed() bool {
+	if cronjob := cjso.CronJob; cronjob != nil {
+		container := cronjob.Spec.JobTemplate.Spec.Template.Spec.Containers[0]
+
+		if container.Image != cjso.AppCronJob.Image {
+			return true
+		}
+
+		if cronjob.Spec.Schedule != cjso.AppCronJob.Schedule {
+			return true
+		}
+
+		if !utils.StringSliceEquals(container.Command, cjso.AppCronJob.Command) {
+			return true
+		}
+	}
+
 	return false
 }
 
