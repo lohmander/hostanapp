@@ -116,7 +116,7 @@ func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) (
 	hasIngress := false
 
 	for _, service := range app.Spec.Services {
-		objects = append(objects, &ServiceStateObject{r, service, app, nil, nil})
+		objects = append(objects, &ServiceStateObject{r, service, app, nil, nil, nil, nil})
 
 		if service.Ingress != nil {
 			hasIngress = true
@@ -231,7 +231,7 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		}
 
 		serviceMap[deploy.Name] = &ServiceStateObject{
-			r, *appService, app, &deploy, nil,
+			r, *appService, app, &deploy, nil, configMapList.Items, secretList.Items,
 		}
 	}
 
@@ -266,6 +266,8 @@ type ServiceStateObject struct {
 	App        *hostanv1.App
 	Deployment *appsv1.Deployment
 	Service    *corev1.Service
+	ConfigMaps []corev1.ConfigMap
+	Secrets    []corev1.Secret
 }
 
 func (sso *ServiceStateObject) Changed() bool {
@@ -280,6 +282,41 @@ func (sso *ServiceStateObject) Changed() bool {
 
 		if !utils.StringSliceEquals(deploy.Spec.Template.Spec.Containers[0].Command, sso.AppService.Command) {
 			return true
+		}
+
+		for _, use := range sso.App.Spec.Uses {
+			var configMap *corev1.ConfigMap
+			var secret *corev1.Secret
+
+			if sso.ConfigMaps != nil {
+				for _, cm := range sso.ConfigMaps {
+					if cm.Name == UseConfigName(sso.App, use) {
+						configMap = &cm
+						break
+					}
+				}
+			}
+
+			if sso.Secrets != nil {
+				for _, sec := range sso.Secrets {
+					if sec.Name == UseConfigName(sso.App, use) {
+						secret = &sec
+						break
+					}
+				}
+			}
+
+			useState := UseStateObject{
+				sso.Reconciler,
+				use,
+				sso.App,
+				configMap,
+				secret,
+			}
+
+			if useState.Changed() {
+				return true
+			}
 		}
 	}
 
@@ -325,7 +362,8 @@ func (sso *ServiceStateObject) Create() error {
 						Ports:   []corev1.ContainerPort{{ContainerPort: sso.AppService.Port}},
 						EnvFrom: envFroms,
 						Env: []corev1.EnvVar{{
-							Name:  "HOSTANAPP_TICK",
+							Name: "HOSTANAPP_TICK",
+							// TODO: implement a real tick
 							Value: "1",
 						}},
 					}},

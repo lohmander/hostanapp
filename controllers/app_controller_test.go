@@ -377,5 +377,35 @@ var _ = Describe("App controller", func() {
 				return errors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, use)}, &corev1.ConfigMap{}))
 			}, timeout, interval).Should(BeTrue())
 		})
+
+		By("Changing an app use (through config, add, or delete)")
+		It("Should mark any services as changed too", func() {
+			ctx := context.Background()
+			appService := app.Spec.Services[1]
+			appUse := app.Spec.Uses[0]
+			deploy := appsv1.Deployment{}
+
+			By("First check that it succeeds at getting the deployment")
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: ServiceName(app, appService)}, &deploy)
+			}, timeout, interval).Should(Succeed())
+
+			configMap := corev1.ConfigMap{}
+			secret := corev1.Secret{}
+
+			if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, appUse)}, &configMap); err != nil {
+				Fail(err.Error())
+			}
+
+			if err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: UseConfigName(app, appUse)}, &secret); err != nil {
+				Fail(err.Error())
+			}
+
+			app.Spec.Uses[0].Config = map[string]string{"Changed": "Value"}
+
+			sso := ServiceStateObject{nil, appService, app, &deploy, nil, []corev1.ConfigMap{configMap}, []corev1.Secret{secret}}
+
+			Expect(sso.Changed()).To(BeTrue())
+		})
 	})
 })
