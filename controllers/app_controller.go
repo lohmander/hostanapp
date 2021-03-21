@@ -22,24 +22,46 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/iancoleman/strcase"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1beta1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	hostanv1alpha1 "github.com/lohmander/hostanapp/api/v1"
-	provider "github.com/lohmander/hostanapp/provider"
+	hostanv1 "github.com/lohmander/hostanapp/api/v1"
+	"github.com/lohmander/hostanapp/plan"
 	"github.com/lohmander/hostanapp/utils"
 )
 
-// AppXReconciler reconciles a App object
-type AppXReconciler struct {
+const (
+	// LabelApp is used for the label placed on each k8s resource for referencing the App object
+	LabelApp = "app.hostan.app/app"
+
+	// LabelProvider is used to make configuration resources queryable by provider
+	LabelProvider = "app.hostan.app/provider"
+
+	// AnnotationConfigHash is used to compare whether or not the underlying configuration for a
+	// given provisioned configuration resource has changed since it was provisioned
+	AnnotationConfigHash = "app.hostan.app/config-hash"
+)
+
+// UseConfigName constructs the name string for a use config (ConfigMap & Secret)
+func UseConfigName(app *hostanv1.App, use hostanv1.AppUse) string {
+	return fmt.Sprintf("%s-%s", app.Name, use.Name)
+}
+
+// ServiceName constructs the name string for a service (Deployment & Service)
+func ServiceName(app *hostanv1.App, service hostanv1.AppService) string {
+	return fmt.Sprintf("%s-%s", app.Name, service.Name)
+}
+
+// AppReconciler reconciles a App object
+type AppReconciler struct {
 	client.Client
 	Log    logr.Logger
 	Scheme *runtime.Scheme
@@ -49,25 +71,17 @@ type AppXReconciler struct {
 // +kubebuilder:rbac:groups=hostan.hostan.app,resources=apps/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
-func getProviderWithName(providers *hostanv1alpha1.ProviderList, name string) (*hostanv1alpha1.Provider, error) {
-	for _, provider := range providers.Items {
-		if provider.ObjectMeta.Name == name {
-			return &provider, nil
-		}
-	}
+// Reconcile implements the reconciliation loop
+func (r *AppReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
+	var err error
 
-	return nil, fmt.Errorf("no provider found for %s", name)
-}
-
-// Reconcile implements the reconcile loop
-func (r *AppXReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	log := r.Log.WithValues("app", req.NamespacedName)
 
-	app := &hostanv1alpha1.App{}
-	err := r.Get(ctx, req.NamespacedName, app)
+	// Get the App resource
+	app := &hostanv1.App{}
 
-	if err != nil {
+	if err = r.Get(ctx, req.NamespacedName, app); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("App resource not found. Ignoring since object must be deleted")
 			return ctrl.Result{}, nil
@@ -77,628 +91,656 @@ func (r *AppXReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, err
 	}
 
-	result, err := r.reconcileProviders(log, app)
+	current, err := r.AllCurrentObjects(req, app)
+	desired, err := r.AllDesiredObjects(req, app)
 
-	// Return either if there's an error or we returned a
-	// requeue result
-	if err != nil || result.Requeue {
-		return result, err
-	}
+	p, err := plan.Make(current, desired)
 
-	return r.reconcileAppServices(log, app)
-}
+	fmt.Println(p.Describe())
 
-func (r *AppXReconciler) reconcileProviders(log logr.Logger, app *hostanv1alpha1.App) (ctrl.Result, error) {
-	// Not all apps has uses
-	if app.Spec.Uses == nil {
-		return ctrl.Result{}, nil
-	}
-
-	var err error
-	ctx := context.Background()
-	providers := &hostanv1alpha1.ProviderList{}
-
-	if err = r.List(ctx, providers); err != nil {
-		log.Error(err, "Failed to get Providers")
+	if err := p.Execute(); err != nil {
 		return ctrl.Result{}, err
-	}
-
-	// iterate through uses and get configuration from providers
-	for _, use := range app.Spec.Uses {
-		var configMap *corev1.ConfigMap
-
-		provider_, err := getProviderWithName(providers, use.Name)
-
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		configMapName := fmt.Sprintf("%s-%s", app.Name, use.Name)
-		found := &corev1.ConfigMap{}
-		err = r.Get(ctx, types.NamespacedName{Namespace: app.Namespace, Name: configMapName}, found)
-
-		if err != nil && errors.IsNotFound(err) {
-			log.Info("Creating config map", "name", configMapName)
-			configMap, err := r.providerConfigMapForAppUse(app, provider_, &use)
-
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-
-			err = r.Create(ctx, configMap)
-
-			if err != nil {
-				log.Error(err, "Failed to create config map", "name", configMapName)
-				return ctrl.Result{}, err
-			}
-
-			log.Info("Successfully created config map", "name", configMapName)
-			return ctrl.Result{Requeue: true}, nil
-		}
-
-		configHash, err := utils.CreateConfigHash(use.Config)
-
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		if found.Annotations["hostan.hostan.app/config-hash"] == *configHash {
-			continue
-		}
-
-		configMap, err = r.providerConfigMapForAppUse(app, provider_, &use)
-
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		if err = r.Update(ctx, configMap); err != nil {
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-
-		log.Info("Successfully updated config map", "name", configMapName)
-	}
-
-	// Deprovision and delete old configs
-	configMapList := &corev1.ConfigMapList{}
-	err = r.List(
-		ctx,
-		configMapList,
-		client.InNamespace(app.Namespace),
-		client.MatchingLabels{"hostan.hostan.app/app": app.Name},
-	)
-
-	if err != nil {
-		log.Error(err, "Failed to get config maps for app", "name", app.Name)
-		return ctrl.Result{}, err
-	}
-
-	for _, cm := range configMapList.Items {
-		if !utils.UsesProviderWithNameInApp(cm.Name, app) {
-			log.Info("Deprovisining provider for configmap", "ConfigMap", cm.Name, "App", app.Name)
-
-			provider_, err := getProviderWithName(providers, cm.Labels["hostan.hostan.app/provider"])
-
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-
-			providerClient, err := provider.NewClient(provider_.Spec.URL)
-
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-
-			_, err = providerClient.DeprovisionAppConfig(ctx, &provider.DeprovisionAppConfigRequest{
-				AppName: app.Name,
-			})
-
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-
-			log.Info("Successfully deprovisioned", "App", app.Name, "WithProvider", cm.Labels["hostan.hostan.app/provider"])
-			log.Info("Deleting configmap", "ConfigMap", cm.Name, "App", app.Name)
-			err = r.Delete(ctx, &cm, client.GracePeriodSeconds(10))
-
-			if err != nil {
-				log.Error(err, "Failed to delete config map", cm.Name, "for app", app.Name)
-				return ctrl.Result{}, err
-			}
-
-			return ctrl.Result{Requeue: true}, nil
-		}
 	}
 
 	return ctrl.Result{}, nil
 }
 
-func (r *AppXReconciler) reconcileAppServices(log logr.Logger, app *hostanv1alpha1.App) (ctrl.Result, error) {
-	var err error
-	ctx := context.Background()
+// AllDesiredObjects returns a list of resources that are part of the "desired" state that we
+// will attempt to reconcile towards
+func (r *AppReconciler) AllDesiredObjects(req ctrl.Request, app *hostanv1.App) ([]plan.Resource, error) {
+	var objects []plan.Resource
 
-	providerConfigMaps := &corev1.ConfigMapList{}
-	err = r.List(ctx, providerConfigMaps, client.MatchingLabels{"hostan.hostan.app/app": app.Name})
-
-	if err != nil {
-		return ctrl.Result{}, err
+	for _, use := range app.Spec.Uses {
+		objects = append(objects, &UseStateObject{r, use, app, nil, nil})
 	}
+
+	hasIngress := false
 
 	for _, service := range app.Spec.Services {
-		// Reconcile deployments
-		deploy := r.deploymentForAppService(app, service, providerConfigMaps.Items)
+		objects = append(objects, &ServiceStateObject{r, service, app, nil, nil, nil, nil})
 
-		found := &appsv1.Deployment{}
-		err = r.Get(ctx, types.NamespacedName{Name: deploy.Name, Namespace: app.Namespace}, found)
-
-		if err != nil && errors.IsNotFound(err) {
-			log.Info("Creating new Deployment", "Namespace", deploy.Namespace, "Name", deploy.Name)
-
-			err = r.Create(ctx, deploy)
-
-			if err != nil {
-				log.Error(err, "Failed to create new deployment for", deploy.Name)
-				return ctrl.Result{}, err
-			}
-
-			return ctrl.Result{Requeue: true}, nil
-		}
-
-		updated := false
-		container := &found.Spec.Template.Spec.Containers[0] // For now we only support one container per pod
-
-		// Check if the image changed, and if so update it
-		if container.Image != service.Image {
-			container.Image = service.Image
-			updated = true
-		}
-
-		// Check if the service command changed, and if so update it
-		if service.Command != nil && utils.StringSliceEquals(container.Command, service.Command) {
-			container.Command = service.Command
-			updated = true
-		}
-
-		// Check if the service port changed, and if so update it
-		if container.Ports[0].ContainerPort != service.Port {
-			container.Ports[0].ContainerPort = service.Port
-			updated = true
-		}
-
-		// TODO: check if providers changed
-		inConfigMapList := func(name string, ls *corev1.ConfigMapList) bool {
-			for _, item := range ls.Items {
-				if item.Name == name {
-					return true
-				}
-			}
-
-			return false
-		}
-
-		inEnvFromList := func(name string, ls []corev1.EnvFromSource) bool {
-			for _, item := range ls {
-				if item.ConfigMapRef.Name == name {
-					return true
-				}
-			}
-
-			return false
-		}
-
-		for _, envFrom := range container.EnvFrom {
-			if !inConfigMapList(envFrom.ConfigMapRef.Name, providerConfigMaps) {
-				updated = true
-			}
-		}
-
-		for _, cm := range providerConfigMaps.Items {
-			if !inEnvFromList(cm.Name, container.EnvFrom) {
-				updated = true
-			}
-		}
-
-		container.EnvFrom = deploy.Spec.Template.Spec.Containers[0].EnvFrom
-
-		// If any property was updated, update the deployment and requeue
-		if updated {
-			err = r.Update(ctx, found)
-			log.Info("Updated deployment for service", "App", app.Name, "Service", service.Name)
-
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-
-			return ctrl.Result{Requeue: true}, nil
-		}
-
-		// Reconcile service
-		_, err = r.reconcileService(log, app, service)
-
-		if err != nil {
-			log.Error(err, "Failed to reconcile Service", service.Name)
-		}
-
-		// Reconcile ingress
-		_, err = r.reconcileIngress(log, app, service)
-
-		if err != nil {
-			log.Error(err, "Failed to reconcile Ingress", "Name", service.Name)
-			return ctrl.Result{}, err
+		if service.Ingress != nil {
+			hasIngress = true
 		}
 	}
 
-	// Delete orphaned resources
-	deployList := &appsv1.DeploymentList{}
-	err = r.List(
-		ctx,
-		deployList,
-		client.InNamespace(app.Namespace),
-		client.MatchingLabels{"app": app.Name},
-	)
-
-	if err != nil {
-		log.Error(err, "Failed to get deployments for app")
-		return ctrl.Result{}, err
+	if hasIngress {
+		objects = append(objects, &IngressStateObject{r, app, nil})
 	}
 
-	for _, deploy := range deployList.Items {
-		if !utils.ServiceWithNameInApp(deploy.Name, app) {
-			log.Info("Deleting Deployment", "Deploy", deploy.Name, "App", app.Name)
-			err = r.Delete(ctx, &deploy, client.GracePeriodSeconds(10))
-
-			if err != nil {
-				log.Error(err, "Failed to delete deployment", deploy.Name, "for app", app.Name)
-				return ctrl.Result{}, err
-			}
-
-			return ctrl.Result{Requeue: true}, nil
-		}
-	}
-
-	return ctrl.Result{}, nil
+	return objects, nil
 }
 
-func (r *AppXReconciler) reconcileService(log logr.Logger, app *hostanv1alpha1.App, service hostanv1alpha1.AppService) (ctrl.Result, error) {
+func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) ([]plan.Resource, error) {
+	var objects []plan.Resource
+
 	ctx := context.Background()
-	svc := r.serviceForAppService(app, service)
-	found := &corev1.Service{}
-	err := r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, found)
+	labelsSelector := client.MatchingLabels{LabelApp: req.Name}
+	namespace := client.InNamespace(req.Namespace)
+	selectors := []client.ListOption{namespace, labelsSelector}
 
-	if err != nil && errors.IsNotFound(err) {
-		log.Info("Created new (Kubernetes) Service", "Namespace", svc.Namespace, "Name", svc.Name)
+	configMapList := corev1.ConfigMapList{}
 
-		err = r.Create(ctx, svc)
-
-		if err != nil {
-			log.Error(err, "Failed to create new Service for", svc.Name)
-			return ctrl.Result{}, nil
-		}
-
-		return ctrl.Result{Requeue: true}, nil
+	if err := r.List(ctx, &configMapList, selectors...); err != nil {
+		return nil, err
 	}
 
-	updated := false
-	port := &found.Spec.Ports[0]
+	useMap := map[string]*UseStateObject{}
 
-	if port.TargetPort.IntVal != service.Port {
-		updated = true
-		port.TargetPort = intstr.FromInt(int(service.Port))
-		port.Port = service.Port
+	toMapKey := func(labels map[string]string) string {
+		return fmt.Sprintf("%s::%s", labels[LabelApp], labels[LabelProvider])
 	}
 
-	if updated {
-		log.Info("Updating Service", "Name", svc.Name)
-		err = r.Update(ctx, found)
+	for _, x := range configMapList.Items {
+		var appUse hostanv1.AppUse
 
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-	}
+		cm := x
+		key := toMapKey(cm.Labels)
+		provider := cm.Labels[LabelProvider]
 
-	// Delete orphaned resources
-	svcList := &corev1.ServiceList{}
-	err = r.List(
-		ctx,
-		svcList,
-		client.InNamespace(app.Namespace),
-		client.MatchingLabels{"app": app.Name},
-	)
-
-	if err != nil {
-		log.Error(err, "Failed to get svcments for app")
-		return ctrl.Result{}, err
-	}
-
-	for _, svc := range svcList.Items {
-		if !utils.ServiceWithNameInApp(svc.Name, app) {
-			log.Info("Deleting (Kubernetes) Service", "Service", svc.Name, "App", app.Name)
-			err = r.Delete(ctx, &svc, client.GracePeriodSeconds(10))
-
-			if err != nil {
-				log.Error(err, "Failed to delete (Kubernetes) Service", svc.Name, "for app", app.Name)
-				return ctrl.Result{}, err
-			}
-
-			return ctrl.Result{Requeue: true}, nil
-		}
-	}
-
-	return ctrl.Result{}, nil
-}
-
-func (r *AppXReconciler) reconcileIngress(log logr.Logger, app *hostanv1alpha1.App, service hostanv1alpha1.AppService) (ctrl.Result, error) {
-	var err error
-	ctx := context.Background()
-
-	if service.Ingress != nil {
-		ingress := r.ingressForAppService(app, service)
-		found := &netv1.Ingress{}
-		err = r.Get(ctx, types.NamespacedName{Name: ingress.Name, Namespace: ingress.Namespace}, found)
-
-		if err != nil && errors.IsNotFound(err) {
-			log.Info("Creating new Ingress", "Namespace", ingress.Namespace, "Name", ingress.Name)
-
-			err = r.Create(ctx, ingress)
-
-			if err != nil {
-				log.Error(err, "Failed to create new Ingress for", "Name", ingress.Name)
-				return ctrl.Result{}, err
-			}
-
-			return ctrl.Result{Requeue: true}, nil
-		}
-
-		updated := false
-		rule := &found.Spec.Rules[0]
-
-		if rule.Host != service.Ingress.Host {
-			rule.Host = service.Ingress.Host
-			updated = true
-		}
-
-		path := &rule.HTTP.Paths[0]
-		serviceIngressPath := service.Ingress.Path
-
-		// Default to root slash
-		if serviceIngressPath == "" {
-			serviceIngressPath = "/"
-		}
-
-		if path.Path != serviceIngressPath {
-			path.Path = serviceIngressPath
-			updated = true
-		}
-
-		if updated {
-			log.Info("Updating Ingress", "Name", ingress.Name)
-			err = r.Update(ctx, found)
-
-			if err != nil {
-				return ctrl.Result{}, err
+		for _, use := range app.Spec.Uses {
+			if use.Name == provider {
+				appUse = use
+				break
 			}
 		}
-	} else {
-		// The service has no ingress, but we still need to check if there is any previous one
-		ingressName := nameForService(app, service)
-		found := &netv1.Ingress{}
-		err = r.Get(ctx, types.NamespacedName{Name: ingressName, Namespace: app.Namespace}, found)
 
-		if err == nil || !errors.IsNotFound(err) {
-			log.Info("Deleting Ingress", "Ingress", ingressName, "App", app.Name)
-			err = nil
-			err = r.Delete(ctx, found)
+		useMap[key] = &UseStateObject{
+			r, appUse, app, &cm, nil,
+		}
+	}
 
-			if err != nil {
-				log.Error(err, "Failed to delete Ingress")
-				return ctrl.Result{}, nil
+	secretList := corev1.SecretList{}
+
+	if err := r.List(ctx, &secretList, selectors...); err != nil {
+		return nil, err
+	}
+
+	for _, x := range secretList.Items {
+		var appUse hostanv1.AppUse
+
+		sec := x
+		key := toMapKey(sec.Labels)
+		provider := sec.Labels[LabelProvider]
+
+		for _, use := range app.Spec.Uses {
+			if use.Name == provider {
+				appUse = use
+				break
+			}
+		}
+
+		if _, ok := useMap[key]; ok {
+			useMap[key].Secret = &sec
+		} else {
+			useMap[key] = &UseStateObject{
+				r, appUse, app, nil, &sec,
 			}
 		}
 	}
 
-	// Delete orphaned resources
-	ingressList := &netv1.IngressList{}
-	err = r.List(
-		ctx,
-		ingressList,
-		client.InNamespace(app.Namespace),
-		client.MatchingLabels{"app": app.Name},
-	)
-
-	if err != nil {
-		log.Error(err, "Failed to get Ingresses for app")
-		return ctrl.Result{}, err
+	for _, use := range useMap {
+		objects = append(objects, use)
 	}
 
-	for _, ing := range ingressList.Items {
-		if !utils.ServiceWithNameInApp(ing.Name, app) {
-			log.Info("Deleting Ingress", "Ingress", ing.Name, "App", app.Name)
-			err = r.Delete(ctx, &ing, client.GracePeriodSeconds(10))
+	serviceMap := map[string]*ServiceStateObject{}
 
-			if err != nil {
-				log.Error(err, "Failed to delete Ingress", ing.Name, "for app", app.Name)
-				return ctrl.Result{}, err
+	deployList := appsv1.DeploymentList{}
+
+	if err := r.List(ctx, &deployList, selectors...); err != nil {
+		return nil, err
+	}
+
+	for _, x := range deployList.Items {
+		var appService *hostanv1.AppService = nil
+
+		// We need to copy the deploy (x) or the pointer (of all service objects) will point
+		// to the last deployment in deployList after the for loop completes
+		deploy := x
+
+		for _, service := range app.Spec.Services {
+			if ServiceName(app, service) == deploy.Name {
+				appService = &service
+				break
 			}
+		}
 
-			return ctrl.Result{Requeue: true}, nil
+		// If app service is removed, we won't find any, but we still need a temporary representation
+		// in the ServiceStateObjects before the k8s resource is removed
+		if appService == nil {
+			appService = &hostanv1.AppService{}
+		}
+
+		serviceMap[deploy.Name] = &ServiceStateObject{
+			r, *appService, app, &deploy, nil, configMapList.Items, secretList.Items,
 		}
 	}
 
-	return ctrl.Result{}, nil
-}
+	for _, service := range serviceMap {
 
-func (r *AppXReconciler) deploymentForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService, providerConfigMaps []corev1.ConfigMap) *appsv1.Deployment {
-	var replicas int32 = 1
-	var envFrom []corev1.EnvFromSource
+		objects = append(objects, service)
+	}
 
-	for _, providerConfigMap := range providerConfigMaps {
-		envFrom = append(envFrom, corev1.EnvFromSource{
-			Prefix: fmt.Sprintf("%s_", strcase.ToScreamingSnake(providerConfigMap.Labels["hostan.hostan.app/provider"])),
-			ConfigMapRef: &corev1.ConfigMapEnvSource{
-				LocalObjectReference: corev1.LocalObjectReference{
-					Name: providerConfigMap.Name,
-				},
-			},
+	ingressList := netv1.IngressList{}
+
+	if err := r.List(ctx, &ingressList, selectors...); err != nil {
+		return nil, err
+	}
+
+	if len(ingressList.Items) > 0 {
+		objects = append(objects, &IngressStateObject{
+			r, app, &ingressList.Items[0],
 		})
 	}
 
-	name := nameForService(app, service)
-	labels := labelsForServiceDeployment(app, service)
-	deploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: app.Namespace,
-			Labels:    labels,
-		},
+	return objects, nil
+
+}
+
+// Resource implementations
+
+// Services
+
+type ServiceStateObject struct {
+	Reconciler *AppReconciler
+	AppService hostanv1.AppService
+	App        *hostanv1.App
+	Deployment *appsv1.Deployment
+	Service    *corev1.Service
+	ConfigMaps []corev1.ConfigMap
+	Secrets    []corev1.Secret
+}
+
+func (sso *ServiceStateObject) Changed() bool {
+	if deploy := sso.Deployment; deploy != nil {
+		if deploy.Spec.Template.Spec.Containers[0].Image != sso.AppService.Image {
+			return true
+		}
+
+		if deploy.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort != sso.AppService.Port {
+			return true
+		}
+
+		if !utils.StringSliceEquals(deploy.Spec.Template.Spec.Containers[0].Command, sso.AppService.Command) {
+			return true
+		}
+
+		for _, use := range sso.App.Spec.Uses {
+			var configMap *corev1.ConfigMap
+			var secret *corev1.Secret
+
+			if sso.ConfigMaps != nil {
+				for _, cm := range sso.ConfigMaps {
+					if cm.Name == UseConfigName(sso.App, use) {
+						configMap = &cm
+						break
+					}
+				}
+			}
+
+			if sso.Secrets != nil {
+				for _, sec := range sso.Secrets {
+					if sec.Name == UseConfigName(sso.App, use) {
+						secret = &sec
+						break
+					}
+				}
+			}
+
+			useState := UseStateObject{
+				sso.Reconciler,
+				use,
+				sso.App,
+				configMap,
+				secret,
+			}
+
+			if useState.Changed() {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (sso *ServiceStateObject) ToString() string {
+	return fmt.Sprintf("svc:%s", ServiceName(sso.App, sso.AppService))
+}
+
+func (sso *ServiceStateObject) Create() error {
+	ctx := context.Background()
+	labels := map[string]string{
+		LabelApp: sso.App.Name,
+	}
+	meta := metav1.ObjectMeta{
+		Name:      ServiceName(sso.App, sso.AppService),
+		Namespace: sso.App.Namespace,
+		Labels:    labels,
+	}
+
+	envFroms, err := sso.UseConfigEnvFrom()
+
+	if err != nil {
+		return err
+	}
+
+	var replicas int32 = 1
+
+	deploy := appsv1.Deployment{
+		ObjectMeta: meta,
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
 			},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
-				},
+				ObjectMeta: meta,
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Name:    name,
-						Image:   service.Image,
-						Command: service.Command,
-						Ports: []corev1.ContainerPort{{
-							ContainerPort: service.Port,
+						Name:    sso.AppService.Name,
+						Image:   sso.AppService.Image,
+						Ports:   []corev1.ContainerPort{{ContainerPort: sso.AppService.Port}},
+						EnvFrom: envFroms,
+						Env: []corev1.EnvVar{{
+							Name: "HOSTANAPP_TICK",
+							// TODO: implement a real tick
+							Value: "1",
 						}},
-						EnvFrom: envFrom,
 					}},
 				},
 			},
 		},
 	}
 
-	// Set the Hostan App instance as the owner and controller
-	ctrl.SetControllerReference(app, deploy, r.Scheme)
+	ctrl.SetControllerReference(sso.App, &deploy, sso.Reconciler.Scheme)
 
-	return deploy
-}
-
-func (r *AppXReconciler) serviceForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) *corev1.Service {
-	name := nameForService(app, service)
-	labels := labelsForServiceDeployment(app, service)
-	svc := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: app.Namespace,
-			Labels:    labels,
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: labels,
-			Ports: []corev1.ServicePort{{
-				Name:       name,
-				Port:       service.Port,
-				TargetPort: intstr.FromInt(int(service.Port)),
-			}},
-		},
-	}
-
-	// Set the Hostan App instance as the owner and controller
-	ctrl.SetControllerReference(app, svc, r.Scheme)
-
-	return svc
-}
-
-func (r *AppXReconciler) ingressForAppService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) *netv1.Ingress {
-	name := nameForService(app, service)
-	labels := labelsForServiceDeployment(app, service)
-	ingress := &netv1.Ingress{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: app.Namespace,
-			Labels:    labels,
-		},
-		Spec: netv1.IngressSpec{
-			Rules: []netv1.IngressRule{{
-				Host: service.Ingress.Host,
-				IngressRuleValue: netv1.IngressRuleValue{
-					HTTP: &netv1.HTTPIngressRuleValue{
-						Paths: []netv1.HTTPIngressPath{{
-							Path: service.Ingress.Path,
-							Backend: netv1.IngressBackend{
-								ServiceName: name,
-								ServicePort: intstr.FromInt(int(service.Port)),
-							},
-						}},
-					},
-				},
-			}},
-		},
-	}
-
-	// Set the Hostan App instance as the owner and controller
-	ctrl.SetControllerReference(app, ingress, r.Scheme)
-
-	return ingress
-}
-
-func (r *AppXReconciler) providerConfigMapForAppUse(app *hostanv1alpha1.App, provider_ *hostanv1alpha1.Provider, use *hostanv1alpha1.AppUse) (*corev1.ConfigMap, error) {
-	providerClient, err := provider.NewClient(provider_.Spec.URL)
+	err = sso.Reconciler.Create(ctx, &deploy)
 
 	if err != nil {
-		return nil, err
+		return err
+	}
+
+	service := corev1.Service{
+		ObjectMeta: meta,
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{
+				Name:       meta.Name,
+				Protocol:   "TCP",
+				Port:       sso.AppService.Port,
+				TargetPort: intstr.FromInt(int(sso.AppService.Port)),
+			}},
+			Selector: labels,
+		},
+	}
+
+	ctrl.SetControllerReference(sso.App, &service, sso.Reconciler.Scheme)
+
+	return sso.Reconciler.Create(ctx, &service)
+}
+
+func (sso *ServiceStateObject) Update() error {
+	envFroms, err := sso.UseConfigEnvFrom()
+
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()
-	res, err := providerClient.ProvisionAppConfig(ctx, &provider.ProvisionAppConfigRequest{
-		AppName: app.Name,
-		Config:  use.Config,
-	})
+	container := &sso.Deployment.Spec.Template.Spec.Containers[0]
+	container.Image = sso.AppService.Image
+	container.Command = sso.AppService.Command
+	container.Ports[0].ContainerPort = sso.AppService.Port
+	container.EnvFrom = envFroms
 
-	if err != nil {
+	if err := sso.Reconciler.Update(ctx, sso.Deployment); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (sso *ServiceStateObject) Delete() error {
+	ctx := context.Background()
+
+	if sso.Deployment != nil {
+		if err := sso.Reconciler.Delete(ctx, sso.Deployment); err != nil {
+			return err
+		}
+	}
+
+	if sso.Service != nil {
+		if err := sso.Reconciler.Delete(ctx, sso.Service); err != nil {
+			return err
+		}
+	}
+
+	return nil
+
+}
+
+func (sso *ServiceStateObject) UseConfigEnvFrom() ([]corev1.EnvFromSource, error) {
+	ctx := context.Background()
+	labelsSelector := client.MatchingLabels{LabelApp: sso.App.Name}
+	namespace := client.InNamespace(sso.App.Namespace)
+	selectors := []client.ListOption{namespace, labelsSelector}
+
+	configMapList := corev1.ConfigMapList{}
+
+	if err := sso.Reconciler.List(ctx, &configMapList, selectors...); err != nil {
 		return nil, err
 	}
 
-	configHash, err := utils.CreateConfigHash(use.Config)
-	if err != nil {
+	secretList := corev1.SecretList{}
+
+	if err := sso.Reconciler.List(ctx, &secretList, selectors...); err != nil {
 		return nil, err
 	}
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-%s", app.Name, provider_.Name),
-			Namespace: app.Namespace,
-			Annotations: map[string]string{
-				"hostan.hostan.app/config-hash": *configHash,
+
+	envFroms := []corev1.EnvFromSource{}
+
+	for _, configMap := range configMapList.Items {
+		envFroms = append(envFroms, corev1.EnvFromSource{
+			Prefix: ConfigPrefix(configMap.Labels[LabelProvider]),
+			ConfigMapRef: &corev1.ConfigMapEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: configMap.Name,
+				},
 			},
-			Labels: map[string]string{
-				"hostan.hostan.app/provider": use.Name,
-				"hostan.hostan.app/app":      app.Name,
+		})
+	}
+
+	for _, secret := range secretList.Items {
+		envFroms = append(envFroms, corev1.EnvFromSource{
+			Prefix: ConfigPrefix(secret.Labels[LabelProvider]),
+			SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: secret.Name,
+				},
 			},
+		})
+	}
+
+	return envFroms, nil
+}
+
+func ConfigPrefix(provider string) string {
+
+	return fmt.Sprintf("%s_", strcase.ToScreamingSnake(provider))
+}
+
+// Uses
+
+type UseStateObject struct {
+	Reconciler *AppReconciler
+	Use        hostanv1.AppUse
+	App        *hostanv1.App
+	ConfigMap  *corev1.ConfigMap
+	Secret     *corev1.Secret
+}
+
+func ProvisionFromProvider(reconciler *AppReconciler, provider string, app string, config map[string]string) (map[string]string, map[string]string, error) {
+	ctx := context.Background()
+	providers := hostanv1.ProviderList{}
+
+	if err := reconciler.List(ctx, &providers); err != nil {
+		return nil, nil, err
+	}
+
+	providerClientSet := &utils.ProviderClientSet{providers}
+	providerClient, err := providerClientSet.Get(provider)
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return providerClient.Provision(app, config)
+}
+
+func (cm *UseStateObject) Changed() bool {
+	configHash, err := utils.CreateConfigHash(cm.Use.Config)
+
+	if err != nil {
+		cm.Reconciler.Log.Error(err, "Failed to create config hash")
+		return false
+	}
+
+	if cm.ConfigMap != nil {
+		if cm.ConfigMap.Annotations[AnnotationConfigHash] != *configHash {
+			return true
+		}
+	}
+
+	if cm.Secret != nil {
+		if cm.Secret.Annotations[AnnotationConfigHash] != *configHash {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (cm *UseStateObject) ToString() string {
+	return fmt.Sprintf("use:%s", UseConfigName(cm.App, cm.Use))
+}
+
+func (cm *UseStateObject) Create() error {
+	ctx := context.Background()
+	configData, secretData, err := ProvisionFromProvider(cm.Reconciler, cm.Use.Name, cm.App.Name, cm.Use.Config)
+
+	if err != nil {
+		return err
+	}
+
+	configHash, err := utils.CreateConfigHash(cm.Use.Config)
+
+	if err != nil {
+		return err
+	}
+
+	meta := metav1.ObjectMeta{
+		Name:      UseConfigName(cm.App, cm.Use),
+		Namespace: cm.App.Namespace,
+		Labels: map[string]string{
+			LabelApp:      cm.App.Name,
+			LabelProvider: cm.Use.Name,
 		},
-		Data: map[string]string{},
+		Annotations: map[string]string{
+			AnnotationConfigHash: *configHash,
+		},
+	}
+	configMap := corev1.ConfigMap{
+		ObjectMeta: meta,
+		Data:       configData,
 	}
 
-	for _, kv := range res.ConfigVariables {
-		configMap.Data[strcase.ToScreamingSnake(kv.Name)] = kv.Value
+	ctrl.SetControllerReference(cm.App, &configMap, cm.Reconciler.Scheme)
+
+	err = cm.Reconciler.Create(ctx, &configMap)
+
+	if err != nil {
+		return err
 	}
 
-	ctrl.SetControllerReference(app, configMap, r.Scheme)
-
-	return configMap, nil
-}
-
-func nameForService(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) string {
-	return fmt.Sprintf("%s-%s", app.Name, service.Name)
-}
-
-func labelsForServiceDeployment(app *hostanv1alpha1.App, service hostanv1alpha1.AppService) map[string]string {
-	return map[string]string{
-		"operator": "hostanapp",
-		"app":      app.Name,
-		"service":  nameForService(app, service),
+	secret := corev1.Secret{
+		ObjectMeta: meta,
+		StringData: secretData,
 	}
+
+	ctrl.SetControllerReference(cm.App, &secret, cm.Reconciler.Scheme)
+
+	return cm.Reconciler.Create(ctx, &secret)
 }
 
-func (r *AppXReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (cm *UseStateObject) Update() error {
+	configData, secretData, err := ProvisionFromProvider(cm.Reconciler, cm.Use.Name, cm.App.Name, cm.Use.Config)
+
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	if cm.ConfigMap != nil {
+		cm.ConfigMap.Data = configData
+		err = cm.Reconciler.Update(ctx, cm.ConfigMap)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	if cm.Secret != nil {
+		cm.Secret.StringData = secretData
+		err = cm.Reconciler.Update(ctx, cm.Secret)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (cm *UseStateObject) Delete() error {
+	ctx := context.Background()
+
+	if cm.Secret != nil {
+		if err := cm.Reconciler.Delete(ctx, cm.Secret); err != nil {
+			return err
+		}
+	}
+
+	if cm.ConfigMap != nil {
+		return cm.Reconciler.Delete(ctx, cm.ConfigMap)
+	}
+
+	return nil
+}
+
+// Ingresses
+
+type IngressStateObject struct {
+	Reconciler *AppReconciler
+	App        *hostanv1.App
+	Ingress    *netv1.Ingress
+}
+
+func (is *IngressStateObject) Changed() bool {
+	if is.Ingress != nil {
+		for i, service := range is.App.Spec.Services {
+			if service.Ingress == nil {
+				return true
+			}
+
+			if len(is.Ingress.Spec.Rules) > i {
+				rule := is.Ingress.Spec.Rules[i]
+				if rule.Host != service.Ingress.Host {
+					return true
+				}
+
+				if rule.HTTP.Paths[0].Path != service.Ingress.Path {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+func (is *IngressStateObject) ToString() string {
+	return fmt.Sprintf("ing:%s", is.App.Name)
+}
+
+func MakeIngressRules(app *hostanv1.App, services []hostanv1.AppService) []netv1.IngressRule {
+	rules := []netv1.IngressRule{}
+
+	for _, service := range services {
+		if service.Ingress != nil {
+			rules = append(rules, netv1.IngressRule{
+				Host: service.Ingress.Host,
+				IngressRuleValue: netv1.IngressRuleValue{
+					HTTP: &netv1.HTTPIngressRuleValue{
+						Paths: []netv1.HTTPIngressPath{
+							{
+								Path: service.Ingress.Path,
+								Backend: netv1.IngressBackend{
+									ServiceName: ServiceName(app, service),
+									ServicePort: intstr.FromInt(int(service.Port)),
+								},
+							},
+						},
+					},
+				},
+			})
+		}
+	}
+
+	return rules
+}
+
+func (is *IngressStateObject) Create() error {
+	ctx := context.Background()
+	meta := metav1.ObjectMeta{
+		Name:      is.App.Name,
+		Namespace: is.App.Namespace,
+		Labels: map[string]string{
+			LabelApp: is.App.Name,
+		},
+	}
+
+	ingress := netv1.Ingress{
+		ObjectMeta: meta,
+		Spec: netv1.IngressSpec{
+			Rules: MakeIngressRules(is.App, is.App.Spec.Services),
+		},
+	}
+
+	ctrl.SetControllerReference(is.App, &ingress, is.Reconciler.Scheme)
+
+	return is.Reconciler.Create(ctx, &ingress)
+}
+
+func (is *IngressStateObject) Update() error {
+	ctx := context.Background()
+	ingress := is.Ingress
+	ingress.Spec.Rules = MakeIngressRules(is.App, is.App.Spec.Services)
+
+	if err := is.Reconciler.Update(ctx, is.Ingress); err != nil {
+		return err
+	}
+
+	return nil
+}
+func (is *IngressStateObject) Delete() error {
+	ctx := context.Background()
+	return is.Reconciler.Delete(ctx, is.Ingress)
+}
+
+// SetupWithManager sets up the reconciler with a manager
+func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hostanv1alpha1.App{}).
+		For(&hostanv1.App{}).
 		Complete(r)
 }
