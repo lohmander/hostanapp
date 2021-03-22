@@ -19,7 +19,7 @@ word that translates to "the cough."
 - [ ] Add support for explicit environment variable definitions
 - [ ] Add validation hooks for providers
 - [ ] Implement proper statuses
-- [ ] Write a provider for PostgreSQL
+- [x] Write a provider for SQL databases (using database/sql)
 - [ ] Write a provider for redis
 
 ### What it looks like (WIP)
