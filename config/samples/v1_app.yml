@@ -9,7 +9,12 @@ spec:
       port: 80
       ingress:
         host: localhost
-  # uses:
-  #   - name: echo
-  #     config:
-  #       ping: pong
+  # cronjobs:
+  #   - name: echos
+  #     schedule: "* * * * *"
+  #     image: alpine
+  #     command: ["echo", "'hello'"]
+  uses:
+    - name: echo
+      config:
+        ping: pong-dong

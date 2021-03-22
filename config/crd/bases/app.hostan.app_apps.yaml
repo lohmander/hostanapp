@@ -111,7 +111,6 @@ spec:
                 type: object
               type: array
           required:
-          - cronjobs
           - services
           type: object
         status:

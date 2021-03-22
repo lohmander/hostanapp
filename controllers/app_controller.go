@@ -47,6 +47,9 @@ const (
 	// LabelProvider is used to make configuration resources queryable by provider
 	LabelProvider = "app.hostan.app/provider"
 
+	// LabelService is used to make configuration resources queryable by provider
+	LabelService = "app.hostan.app/service"
+
 	// AnnotationConfigHash is used to compare whether or not the underlying configuration for a
 	// given provisioned configuration resource has changed since it was provisioned
 	AnnotationConfigHash = "app.hostan.app/config-hash"
@@ -176,6 +179,10 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 			}
 		}
 
+		if appUse.Name == "" {
+			appUse.Name = cm.Labels[LabelProvider]
+		}
+
 		useMap[key] = &UseStateObject{
 			r, appUse, app, &cm, nil,
 		}
@@ -199,6 +206,10 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 				appUse = use
 				break
 			}
+		}
+
+		if appUse.Name == "" {
+			appUse.Name = sec.Labels[LabelProvider]
 		}
 
 		if _, ok := useMap[key]; ok {
@@ -239,7 +250,9 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		// If app service is removed, we won't find any, but we still need a temporary representation
 		// in the ServiceStateObjects before the k8s resource is removed
 		if appService == nil {
-			appService = &hostanv1.AppService{}
+			appService = &hostanv1.AppService{
+				Name: deploy.Labels[LabelService],
+			}
 		}
 
 		serviceMap[deploy.Name] = &ServiceStateObject{
@@ -398,6 +411,10 @@ func (sso *ServiceStateObject) Changed() bool {
 				}
 			}
 
+			if configMap == nil && secret == nil {
+				return true
+			}
+
 			useState := UseStateObject{
 				sso.Reconciler,
 				use,
@@ -407,6 +424,36 @@ func (sso *ServiceStateObject) Changed() bool {
 			}
 
 			if useState.Changed() {
+				return true
+			}
+		}
+
+		for _, cm := range sso.ConfigMaps {
+			found := false
+
+			for _, use := range sso.App.Spec.Uses {
+				if cm.Name == UseConfigName(sso.App, use) {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				return true
+			}
+		}
+
+		for _, sec := range sso.Secrets {
+			found := false
+
+			for _, use := range sso.App.Spec.Uses {
+				if sec.Name == UseConfigName(sso.App, use) {
+					found = true
+					break
+				}
+			}
+
+			if !found {
 				return true
 			}
 		}
@@ -422,7 +469,8 @@ func (sso *ServiceStateObject) ToString() string {
 func (sso *ServiceStateObject) Create() error {
 	ctx := context.Background()
 	labels := map[string]string{
-		LabelApp: sso.App.Name,
+		LabelApp:     sso.App.Name,
+		LabelService: sso.AppService.Name,
 	}
 	meta := metav1.ObjectMeta{
 		Name:      ServiceName(sso.App, sso.AppService),
@@ -503,6 +551,11 @@ func (sso *ServiceStateObject) Update() error {
 	container.Command = sso.AppService.Command
 	container.Ports[0].ContainerPort = sso.AppService.Port
 	container.EnvFrom = envFroms
+	container.Env = []corev1.EnvVar{{
+		Name: "HOSTANAPP_APP_VERSION",
+		// TOOD: find a more elegant solution that doesn't restart on every app update
+		Value: sso.App.ResourceVersion,
+	}}
 
 	if err := sso.Reconciler.Update(ctx, sso.Deployment); err != nil {
 		return err
@@ -666,6 +719,24 @@ func ProvisionFromProvider(reconciler *AppReconciler, provider string, app strin
 	return providerClient.Provision(app, config)
 }
 
+func DeprovisionFromProvider(reconciler *AppReconciler, provider string, app string) error {
+	ctx := context.Background()
+	providers := hostanv1.ProviderList{}
+
+	if err := reconciler.List(ctx, &providers); err != nil {
+		return err
+	}
+
+	providerClientSet := &utils.ProviderClientSet{ProviderList: providers}
+	providerClient, err := providerClientSet.Get(provider)
+
+	if err != nil {
+		return err
+	}
+
+	return providerClient.Deprovision(app)
+}
+
 func (cm *UseStateObject) Changed() bool {
 	configHash, err := utils.CreateConfigHash(cm.Use.Config)
 
@@ -781,7 +852,13 @@ func (cm *UseStateObject) Delete() error {
 	}
 
 	if cm.ConfigMap != nil {
-		return cm.Reconciler.Delete(ctx, cm.ConfigMap)
+		if err := cm.Reconciler.Delete(ctx, cm.ConfigMap); err != nil {
+			return err
+		}
+	}
+
+	if err := DeprovisionFromProvider(cm.Reconciler, cm.Use.Name, cm.App.Name); err != nil {
+		return err
 	}
 
 	return nil

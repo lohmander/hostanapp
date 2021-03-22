@@ -73,7 +73,7 @@ type AppSpec struct {
 
 	// +kubebuilder:validation:MinItems=1
 	Services []AppService `json:"services"`
-	CronJobs []AppCronJob `json:"cronjobs"`
+	CronJobs []AppCronJob `json:"cronjobs,omitempty"`
 
 	Uses []AppUse `json:"uses,omitempty"`
 }
