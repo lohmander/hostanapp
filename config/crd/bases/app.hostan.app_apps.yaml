@@ -34,6 +34,30 @@ spec:
         spec:
           description: AppSpec defines the desired state of App
           properties:
+            cronjobs:
+              items:
+                description: AppCronJob defines a service that constitutes part of
+                  an app
+                properties:
+                  command:
+                    items:
+                      type: string
+                    type: array
+                  image:
+                    minLength: 1
+                    type: string
+                  name:
+                    maxLength: 20
+                    minLength: 3
+                    type: string
+                  schedule:
+                    type: string
+                required:
+                - image
+                - name
+                - schedule
+                type: object
+              type: array
             services:
               items:
                 description: AppService defines a service that constitutes part of
@@ -87,6 +111,7 @@ spec:
                 type: object
               type: array
           required:
+          - cronjobs
           - services
           type: object
         status:

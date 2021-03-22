@@ -282,7 +282,6 @@ func (r *AppReconciler) AllCurrentObjects(req ctrl.Request, app *hostanv1.App) (
 		}
 
 		cronJob := x
-
 		objects = append(objects, &CronJobStateObject{
 			ConfigEnvStateObject{r, app},
 			r, app, appCronJob, &cronJob,
@@ -610,10 +609,32 @@ func (cjso *CronJobStateObject) Create() error {
 }
 
 func (cjso *CronJobStateObject) Update() error {
+	envFroms, err := cjso.UseConfigEnvFrom()
+
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	container := &cjso.CronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0]
+	container.Image = cjso.AppCronJob.Image
+	container.Command = cjso.AppCronJob.Command
+	cjso.CronJob.Spec.Schedule = cjso.AppCronJob.Schedule
+	container.EnvFrom = envFroms
+
+	if err := cjso.Reconciler.Update(ctx, cjso.CronJob); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (cjso *CronJobStateObject) Delete() error {
+	if cjso.CronJob != nil {
+		ctx := context.Background()
+		return cjso.Reconciler.Delete(ctx, cjso.CronJob)
+	}
+
 	return nil
 }
 

@@ -425,6 +425,86 @@ var _ = Describe("App controller", func() {
 
 			Expect(sso.Changed()).To(BeTrue())
 		})
+
+		It("Should update a cronjob with a new image", func() {
+			ctx := context.Background()
+
+			appCronJob := &app.Spec.CronJobs[0]
+			appCronJob.Image = "node"
+			// app.Spec.Services[0].Image = "node"
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			Eventually(func() string {
+				cronJob := batchv1beta.CronJob{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: CronJobName(app, *appCronJob)}, &cronJob)
+
+				if err != nil {
+					return err.Error()
+				}
+
+				return cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Image
+			}, timeout, interval).Should(Equal("node"))
+		})
+
+		It("Should update a cronjob with a new command", func() {
+			ctx := context.Background()
+
+			appCronJob := &app.Spec.CronJobs[0]
+			appCronJob.Command = []string{"a", "b", "c"}
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			Eventually(func() []string {
+				cronJob := batchv1beta.CronJob{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: CronJobName(app, *appCronJob)}, &cronJob)
+
+				if err != nil {
+					return []string{err.Error()}
+				}
+
+				return cronJob.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Command
+			}, timeout, interval).Should(BeEquivalentTo(appCronJob.Command))
+		})
+
+		It("Should update a cronjob with a new schedule", func() {
+			ctx := context.Background()
+			app.Spec.CronJobs[0].Schedule = "0 0 * * 0"
+
+			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+			Eventually(func() string {
+				cronJob := batchv1beta.CronJob{}
+				err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: CronJobName(app, app.Spec.CronJobs[0])}, &cronJob)
+
+				if err != nil {
+					return err.Error()
+				}
+
+				return cronJob.Spec.Schedule
+			}, timeout, interval).Should(Equal("0 0 * * 0"))
+		})
+
+		// It("Should delete a cronjob if it is removed from the app spec", func() {
+		// 	ctx := context.Background()
+		// 	cronJob := app.Spec.CronJobs[0]
+
+		// 	Eventually(func() error {
+		// 		return k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: CronJobName(app, cronJob)}, &batchv1beta.CronJob{})
+		// 	}, timeout, interval).Should(Succeed())
+
+		// 	app.Spec.CronJobs = []hostanv1.AppCronJob{}
+
+		// 	Expect(k8sClient.Update(ctx, app)).Should(Succeed())
+
+		// 	By("And then check that it is deleted")
+		// 	Eventually(func() bool {
+		// 		err := k8sClient.Get(ctx, types.NamespacedName{Namespace: AppNamespace, Name: CronJobName(app, cronJob)}, &batchv1beta.CronJob{})
+
+		// 		log.Println("got error!!!?!@#!#!@#", err, CronJobName(app, cronJob))
+		// 		return errors.IsNotFound(err)
+		// 	}, timeout, interval).Should(BeTrue())
+		// })
 	})
 
 	Context("Delete an app", func() {

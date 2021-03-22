@@ -15,7 +15,7 @@ word that translates to "the cough."
 - [x] Implement CRD and controller for the Provider resource
 - [x] Create spec/protobuf file for the provider interface
 - [x] Create config maps and secrets for config upon reconciliation
-- [ ] Add support for cronjobs
+- [x] Add support for cronjobs
 - [ ] Add support for explicit environment variable definitions
 - [ ] Add validation hooks for providers
 - [ ] Implement proper statuses
