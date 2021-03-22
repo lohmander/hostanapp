@@ -9,12 +9,12 @@ spec:
       port: 80
       ingress:
         host: localhost
-  # cronjobs:
-  #   - name: echos
-  #     schedule: "* * * * *"
-  #     image: alpine
-  #     command: ["echo", "'hello'"]
+  cronjobs:
+    - name: echos
+      schedule: "* * * * *"
+      image: alpine
+      command: ["echo", "'hello'"]
   uses:
-    - name: echo
+    - name: postgresql
       config:
-        ping: pong-dong
+        hej: had

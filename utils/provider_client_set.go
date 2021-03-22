@@ -29,6 +29,10 @@ func (client *ProviderClient) Provision(appName string, config map[string]string
 		Config:  config,
 	})
 
+	if err != nil {
+		return nil, nil, err
+	}
+
 	vars := map[string]string{}
 	secrets := map[string]string{}
 

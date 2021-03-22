@@ -1,0 +1,6 @@
+apiVersion: app.hostan.app/v1
+kind: Provider
+metadata:
+  name: postgresql
+spec:
+  url: localhost:6000
