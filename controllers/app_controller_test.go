@@ -261,7 +261,6 @@ var _ = Describe("App controller", func() {
 
 			command := []string{"a", "b", "c"}
 			appService := &app.Spec.Services[0]
-			appService.Command = command
 			app.Spec.Services[0].Command = command
 
 			Expect(k8sClient.Update(ctx, app)).Should(Succeed())
@@ -419,7 +418,7 @@ var _ = Describe("App controller", func() {
 				Fail(err.Error())
 			}
 
-			app.Spec.Uses = []hostanv1.AppUse{}
+			// app.Spec.Uses = []hostanv1.AppUse{}
 
 			sso := ServiceStateObject{ConfigEnvStateObject{nil, app}, nil, appService, app, &deploy, nil, []corev1.ConfigMap{configMap}, []corev1.Secret{secret}}
 

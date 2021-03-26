@@ -499,6 +499,7 @@ func (sso *ServiceStateObject) Create() error {
 					Containers: []corev1.Container{{
 						Name:    sso.AppService.Name,
 						Image:   sso.AppService.Image,
+						Command: sso.AppService.Command,
 						Ports:   []corev1.ContainerPort{{ContainerPort: sso.AppService.Port}},
 						EnvFrom: envFroms,
 						Env: []corev1.EnvVar{{
