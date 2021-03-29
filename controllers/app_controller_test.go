@@ -165,11 +165,13 @@ var _ = Describe("App controller", func() {
 
 				c := deploy.Spec.Template.Spec.Containers[0]
 
-				if len(c.EnvFrom) >= 2 {
-					return c.EnvFrom[1].SecretRef.Name
+				for _, e := range c.EnvFrom {
+					if e.SecretRef != nil {
+						return e.SecretRef.Name
+					}
 				}
 
-				return ""
+				return "nada"
 			}, timeout, interval).Should(Equal(configName))
 		})
 
